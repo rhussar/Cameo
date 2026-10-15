@@ -18,7 +18,7 @@ struct ContentView: View {
         .padding(.bottom, wide ? 24 : 18)
         .frame(minWidth: 640, minHeight: 500)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { model.windowWidth = $0 }
-        .background(WindowConfigurator { model.mainWindow = $0 })
+        .background(WindowConfigurator(closable: !model.isBusy) { model.mainWindow = $0 })
         .onAppear(perform: model.appeared)
     }
 }
@@ -501,6 +501,8 @@ private struct Notice: View {
 
 /// Hands the hosting NSWindow to the model and sets a few window traits SwiftUI doesn't expose.
 private struct WindowConfigurator: NSViewRepresentable {
+    /// Off while recording or making the video, so the window can't be closed mid-way.
+    let closable: Bool
     let onWindow: (NSWindow) -> Void
 
     func makeNSView(context: Context) -> NSView { NSView() }
@@ -509,6 +511,7 @@ private struct WindowConfigurator: NSViewRepresentable {
         DispatchQueue.main.async {
             guard let window = view.window else { return }
             window.titlebarAppearsTransparent = true
+            window.standardWindowButton(.closeButton)?.isEnabled = closable
             onWindow(window)
         }
     }

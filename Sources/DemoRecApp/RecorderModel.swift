@@ -98,6 +98,35 @@ final class RecorderModel {
         return stage
     }
 
+    /// Recording, or making the video: quitting or closing now would lose it.
+    var isBusy: Bool {
+        switch phase {
+        case .recording, .processing: true
+        default: false
+        }
+    }
+
+    /// Asks before quitting while busy. True = go ahead and quit.
+    func confirmQuit() -> Bool {
+        let alert = NSAlert()
+        switch phase {
+        case .recording:
+            alert.messageText = "You're still recording."
+            alert.informativeText = "If you quit now, this recording will be lost."
+            alert.addButton(withTitle: "Keep Recording")
+        case .processing:
+            alert.messageText = "DemoRec is still making your video."
+            alert.informativeText = "If you quit now, the video won't be finished."
+            alert.addButton(withTitle: "Keep Making It")
+        default:
+            return true
+        }
+        alert.addButton(withTitle: "Quit Anyway")
+        alert.alertStyle = .warning
+        NSApp.activate()
+        return alert.runModal() == .alertSecondButtonReturn
+    }
+
     var isSetup: Bool {
         switch phase {
         case .idle, .countdown, .failed: true
