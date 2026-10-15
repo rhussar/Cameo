@@ -74,6 +74,22 @@ the cutout over the screen frame, and writes `final.mp4` with the mic audio pass
 | `--no-mask` | off | overlay the whole camera frame (debugging / picture-in-picture) |
 | `--output <file>` | `final.mp4` in the session folder | output path |
 
+By default the screen is staged like the reference video: a rounded, slightly tilted card with a
+drop shadow, floating over a zoomed and blurred copy of the same screen content. Fractions are
+relative to the output frame height.
+
+| flag | default | meaning |
+|---|---|---|
+| `--flat` | off | plain full-frame screen, no staging |
+| `--inset` | `0.88` | card height as a fraction of the frame |
+| `--card-x` | `0.47` | horizontal position of the card centre, 0-1 |
+| `--tilt` | `4` | degrees of rotation about the vertical axis; positive brings the left edge closer |
+| `--radius` | `0.012` | corner radius |
+| `--bg-blur` | `0.03` | backdrop blur sigma |
+| `--bg-zoom` | `1.2` | backdrop zoom |
+| `--bg-dim` | `0.35` | backdrop darkening, 0-1 |
+| `--shadow` | `0.6` | drop shadow opacity, 0 disables |
+
 Tips: `--quality accurate` is roughly real time on Apple silicon; use `fast` for a quick
 preview. Good lighting and a plain background behind you make the mask noticeably cleaner.
 

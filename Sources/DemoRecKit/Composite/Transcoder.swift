@@ -164,7 +164,7 @@ public final class Transcoder {
             }
 
             let screen = screenSrc.current.map { CIImage(cvPixelBuffer: $0) } ?? black
-            var frame = cutout.map { compositor.compose(screen: screen, cutout: $0) } ?? screen
+            var frame = compositor.compose(screen: screen, cutout: cutout)
             if outputScale != 1 {
                 frame = frame.transformed(by: CGAffineTransform(scaleX: outputScale, y: outputScale))
             }

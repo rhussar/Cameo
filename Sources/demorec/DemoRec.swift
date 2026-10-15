@@ -83,6 +83,16 @@ struct Composite: AsyncParsableCommand {
     @Option(name: .customLong("output-height"), help: "Downscale the output to this height (keeps aspect). Default: native screen size.") var outputHeight: Int?
     @Option(help: "Output file. Default: final.mp4 in the session folder.") var output: String?
 
+    @Flag(help: "Flat layout: full-frame screen with no backdrop, card or tilt.") var flat = false
+    @Option(help: "Card height as a fraction of the frame height.") var inset: Double = 0.88
+    @Option(name: .customLong("card-x"), help: "Horizontal position of the card centre, 0-1.") var cardX: Double = 0.47
+    @Option(help: "Card tilt in degrees; positive brings the left edge closer.") var tilt: Double = 4
+    @Option(help: "Card corner radius as a fraction of the frame height.") var radius: Double = 0.012
+    @Option(name: .customLong("bg-blur"), help: "Backdrop blur as a fraction of the frame height.") var bgBlur: Double = 0.03
+    @Option(name: .customLong("bg-zoom"), help: "Backdrop zoom factor.") var bgZoom: Double = 1.2
+    @Option(name: .customLong("bg-dim"), help: "Backdrop darkening, 0-1.") var bgDim: Double = 0.35
+    @Option(help: "Drop shadow opacity, 0-1.") var shadow: Double = 0.6
+
     func run() async throws {
         let dir = URL(fileURLWithPath: NSString(string: session).expandingTildeInPath)
         let screenURL = dir.appendingPathComponent("screen.mov")
@@ -91,7 +101,19 @@ struct Composite: AsyncParsableCommand {
             throw DemoRecError("missing \(u.lastPathComponent) in \(dir.path)")
         }
         let outURL = output.map { URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath) } ?? dir.appendingPathComponent("final.mp4")
-        let layout = Layout(corner: corner, scale: scale, margin: margin, feather: feather, mirror: mirror)
+        var layout = Layout(corner: corner, scale: scale, margin: margin, feather: feather, mirror: mirror)
+        if !flat {
+            var stage = Stage()
+            stage.inset = inset
+            stage.cardX = cardX
+            stage.tilt = tilt
+            stage.cornerRadius = radius
+            stage.backgroundBlur = bgBlur
+            stage.backgroundZoom = bgZoom
+            stage.backgroundDim = bgDim
+            stage.shadowOpacity = shadow
+            layout.stage = stage
+        }
         let transcoder = Transcoder(layout: layout, fps: fps, outputHeight: outputHeight, quality: quality, maskEnabled: !noMask)
         try await transcoder.run(screenURL: screenURL, cameraURL: cameraURL, outputURL: outURL)
         print("Wrote \(outURL.path)")
