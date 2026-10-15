@@ -379,7 +379,7 @@ final class RecorderModel {
             do {
                 try await screen.stop()
                 try await camera.stop()
-                let transcoder = Transcoder(layout: layout, fps: fps, outputHeight: nil, quality: .accurate)
+                let transcoder = Transcoder(layout: layout, fps: fps, outputHeight: nil, quality: .balanced)
                 transcoder.onProgress = { p in
                     Task { @MainActor in
                         if case .processing = self.phase { self.phase = .processing(p) }

@@ -78,7 +78,7 @@ struct Composite: AsyncParsableCommand {
     @Option(help: "Edge softness (blur sigma). 0 = hard edge.") var feather: Double = 2
     @Flag(help: "Mirror the camera horizontally.") var mirror = false
     @Flag(name: .customLong("no-mask"), help: "Skip person segmentation and overlay the full camera frame.") var noMask = false
-    @Option(help: "Segmentation quality: fast, balanced, accurate.") var quality: MaskQuality = .accurate
+    @Option(help: "Segmentation quality: fast, balanced, accurate.") var quality: MaskQuality = .balanced
     @Option(help: "Output frame rate.") var fps: Int = 30
     @Option(name: .customLong("output-height"), help: "Downscale the output to this height (keeps aspect). Default: native screen size.") var outputHeight: Int?
     @Option(help: "Output file. Default: final.mp4 in the session folder.") var output: String?

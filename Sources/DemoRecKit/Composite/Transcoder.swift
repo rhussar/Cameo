@@ -146,7 +146,17 @@ public final class Transcoder {
 
         // Frame generation on a fixed output clock.
         let screenSrc = FrameSource(output: screenOut)
-        let cameraSrc = FrameSource(output: cameraOut)
+        // Cutouts are made on their own thread, ahead of the render loop, at the size they appear in the video.
+        let frameHeight = layout.canvas?.height ?? screenSize.height
+        let cutoutHeight = layout.scale * frameHeight
+        let cutouts = CutoutStage(output: cameraOut) { [masker, compositor, ciContext, maskEnabled] buffer in
+            var camera = CIImage(cvPixelBuffer: buffer)
+            let s = cutoutHeight / camera.extent.height
+            if s < 1 { camera = camera.transformed(by: CGAffineTransform(scaleX: s, y: s)) }
+            let mask = maskEnabled ? try masker.mask(for: buffer) : nil
+            return try Self.materialize(compositor.cutout(camera: camera, mask: mask), context: ciContext)
+        }
+        defer { cutouts.cancel() }
         // Both recorders share a start clock but deliver their first frames a moment later.
         // Start the video once both have a frame, so it doesn't open on black.
         let start = CMTimeMaximum(try await Self.firstFrameTime(screenTrack), try await Self.firstFrameTime(cameraTrack))
@@ -158,7 +168,6 @@ public final class Transcoder {
         let frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
         let totalFrames = max(1, Int(((duration - start).seconds * Double(fps)).rounded(.up)))
         print(String(format: "length: %.1f s (skipping the first %.2f s before both recordings have a frame)", (duration - start).seconds, start.seconds))
-        var cutout: CIImage?
         let black = CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: screenSize.width, height: screenSize.height))
         let started = Date()
         var frameIndex = 0
@@ -169,12 +178,7 @@ public final class Transcoder {
             frameIndex += 1
             let t = CMTimeMultiply(frameDuration, multiplier: Int32(i))
             _ = screenSrc.advance(to: start + t)
-            let cameraChanged = cameraSrc.advance(to: start + t)
-
-            if cameraChanged, let camBuf = cameraSrc.current {
-                let mask = maskEnabled ? try masker.mask(for: camBuf) : nil
-                cutout = compositor.cutout(camera: CIImage(cvPixelBuffer: camBuf), mask: mask)
-            }
+            let cutout = try cutouts.advance(to: start + t)
 
             let screen = screenSrc.current.map { CIImage(cvPixelBuffer: $0) } ?? black
             var frame = compositor.compose(screen: screen, cutout: cutout)
@@ -266,6 +270,18 @@ public final class Transcoder {
         audioReader?.cancelReading()
     }
 
+    /// Renders an image into its own buffer so later frames reuse the pixels instead of redoing the work.
+    private static func materialize(_ image: CIImage, context: CIContext) throws -> CIImage {
+        let image = image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
+        var buffer: CVPixelBuffer?
+        CVPixelBufferCreate(nil, Int(image.extent.width.rounded(.up)), Int(image.extent.height.rounded(.up)), kCVPixelFormatType_32BGRA,
+                            [kCVPixelBufferMetalCompatibilityKey: true, kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer)
+        guard let buffer else { throw DemoRecError("could not allocate cutout buffer") }
+        let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
+        context.render(image, to: buffer, bounds: image.extent, colorSpace: srgb)
+        return CIImage(cvPixelBuffer: buffer, options: [.colorSpace: srgb])
+    }
+
     /// When a recording's first real frame lands: the end of the empty edit the recorder leaves before it.
     private static func firstFrameTime(_ track: AVAssetTrack) async throws -> CMTime {
         let segments = try await track.load(.segments)
@@ -286,5 +302,78 @@ public final class Transcoder {
         var out: CMSampleBuffer?
         CMSampleBufferCreateCopyWithNewTiming(allocator: nil, sampleBuffer: sb, sampleTimingEntryCount: count, sampleTimingArray: &timing, sampleBufferOut: &out)
         return out
+    }
+}
+
+/// Turns camera frames into finished cutouts on a background thread, a few frames ahead of the render loop,
+/// so segmentation runs alongside rendering instead of between frames.
+private final class CutoutStage: @unchecked Sendable {
+    private let output: AVAssetReaderTrackOutput
+    private let make: (CVPixelBuffer) throws -> CIImage
+    private let condition = NSCondition()
+    private var ready: [(time: CMTime, image: CIImage)] = []
+    private var current: CIImage?
+    private var finished = false
+    private var cancelled = false
+    private var failure: Error?
+    private let lookahead = 6
+
+    init(output: AVAssetReaderTrackOutput, make: @escaping (CVPixelBuffer) throws -> CIImage) {
+        self.output = output
+        self.make = make
+        let thread = Thread { [self] in run() }
+        thread.qualityOfService = .userInitiated
+        thread.start()
+    }
+
+    private func run() {
+        while true {
+            condition.lock()
+            while ready.count >= lookahead, !cancelled { condition.wait() }
+            let stop = cancelled
+            condition.unlock()
+            guard !stop, let sample = output.copyNextSampleBuffer() else { break }
+            guard let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
+            let time = CMSampleBufferGetPresentationTimeStamp(sample)
+            do {
+                let image = try autoreleasepool { try make(buffer) }
+                condition.lock()
+                ready.append((time, image))
+                condition.broadcast()
+                condition.unlock()
+            } catch {
+                condition.lock()
+                failure = error
+                condition.unlock()
+                break
+            }
+        }
+        condition.lock()
+        finished = true
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    /// The latest cutout whose camera frame is at or before `time`, waiting for the thread if it hasn't got there yet.
+    func advance(to time: CMTime) throws -> CIImage? {
+        condition.lock()
+        defer { condition.unlock() }
+        while true {
+            if let failure { throw failure }
+            while let next = ready.first, next.time <= time {
+                current = next.image
+                ready.removeFirst()
+                condition.broadcast()
+            }
+            if !ready.isEmpty || finished { return current }
+            condition.wait()
+        }
+    }
+
+    func cancel() {
+        condition.lock()
+        cancelled = true
+        condition.broadcast()
+        condition.unlock()
     }
 }

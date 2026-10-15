@@ -17,22 +17,44 @@ public final class Compositor {
                 .transformed(by: CGAffineTransform(translationX: cam.extent.width, y: 0))
             cam = cam.transformed(by: CGAffineTransform(translationX: -cam.extent.minX, y: 0))
         }
+        let guide = cam
         cam = adjusted(cam)
         guard let mask else { return cam }
-        let sx = cam.extent.width / mask.extent.width
-        let sy = cam.extent.height / mask.extent.height
-        var m = mask.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+        var m = mask.transformed(by: CGAffineTransform(translationX: -mask.extent.minX, y: -mask.extent.minY))
         if layout.mirror {
-            m = m.transformed(by: CGAffineTransform(scaleX: -1, y: 1)).transformed(by: CGAffineTransform(translationX: cam.extent.width, y: 0))
+            m = m.transformed(by: CGAffineTransform(scaleX: -1, y: 1)).transformed(by: CGAffineTransform(translationX: m.extent.width, y: 0))
         }
+        m = Self.refine(mask: m, guide: guide)
         if layout.feather > 0 {
-            m = m.clampedToExtent().applyingGaussianBlur(sigma: layout.feather).cropped(to: cam.extent)
+            // The refined edge is already soft; half the sigma keeps the old default from blurring it again.
+            m = m.clampedToExtent().applyingGaussianBlur(sigma: layout.feather / 2).cropped(to: cam.extent)
         }
         let blend = CIFilter.blendWithMask()
         blend.inputImage = cam
         blend.backgroundImage = CIImage(color: .clear).cropped(to: cam.extent)
         blend.maskImage = m
         return blend.outputImage ?? cam
+    }
+
+    /// Scales the low-res segmentation mask up to the camera frame, snapping its edge to real edges in the
+    /// frame (hair, shoulders), then tightens the faint outer fringe so no halo of background shows.
+    private static func refine(mask: CIImage, guide: CIImage) -> CIImage {
+        let up = CIFilter.edgePreserveUpsample()
+        up.inputImage = guide
+        up.smallImage = mask
+        up.spatialSigma = 3
+        up.lumaSigma = 0.15
+        let upsampled = up.outputImage?.cropped(to: guide.extent)
+            ?? mask.transformed(by: CGAffineTransform(scaleX: guide.extent.width / mask.extent.width, y: guide.extent.height / mask.extent.height))
+        // Choke: 0.25 and below becomes fully transparent, 0.85 and above fully opaque.
+        let lo: CGFloat = 0.25, k = 1 / (0.85 - lo)
+        let choke = CIFilter.colorMatrix()
+        choke.inputImage = upsampled
+        choke.rVector = CIVector(x: k, y: 0, z: 0, w: 0)
+        choke.gVector = CIVector(x: 0, y: k, z: 0, w: 0)
+        choke.bVector = CIVector(x: 0, y: 0, z: k, w: 0)
+        choke.biasVector = CIVector(x: -lo * k, y: -lo * k, z: -lo * k, w: 0)
+        return (choke.outputImage ?? upsampled).applyingFilter("CIColorClamp")
     }
 
     /// Builds the frame: the screen (flat, or staged as a card over a blurred backdrop) with the cutout in its corner.
