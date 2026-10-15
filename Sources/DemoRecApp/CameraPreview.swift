@@ -16,6 +16,7 @@ final class CameraPreview: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     private let masker = PersonMasker(quality: .balanced)
     private let ciContext: CIContext = MTLCreateSystemDefaultDevice().map { CIContext(mtlDevice: $0) } ?? CIContext()
     private var mirror = false // frameQueue only
+    private var look = Look() // frameQueue only
     private var frameIndex = 0 // frameQueue only
 
     override init() {
@@ -27,6 +28,10 @@ final class CameraPreview: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
 
     func setMirror(_ value: Bool) {
         frameQueue.async { self.mirror = value }
+    }
+
+    func setLook(_ value: Look) {
+        frameQueue.async { self.look = value }
     }
 
     func start(deviceID: String?) {
@@ -58,7 +63,9 @@ final class CameraPreview: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         frameIndex += 1
         guard frameIndex % 2 == 0, let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return } // ~15 fps is plenty
         let mask = try? masker.mask(for: pb)
-        let cutout = Compositor(layout: Layout(feather: 1.5, mirror: mirror)).cutout(camera: CIImage(cvPixelBuffer: pb), mask: mask)
+        var layout = Layout(feather: 1.5, mirror: mirror)
+        layout.look = look
+        let cutout = Compositor(layout: layout).cutout(camera: CIImage(cvPixelBuffer: pb), mask: mask)
         guard let cg = ciContext.createCGImage(cutout, from: cutout.extent) else { return }
         DispatchQueue.main.async { self.onImage?(cg) }
     }

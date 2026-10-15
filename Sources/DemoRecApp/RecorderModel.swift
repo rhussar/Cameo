@@ -21,6 +21,25 @@ final class RecorderModel {
     var cameraDenied = false
     var thumbnail: CGImage?
     var previewHovering = false
+    var lookOpen = false
+    /// Window content width, so controls can grow with a bigger window.
+    var windowWidth: CGFloat = 1100
+
+    /// Output frame size, e.g. YouTube 4K or LinkedIn square.
+    var format: OutputFormat {
+        didSet {
+            UserDefaults.standard.set(format.rawValue, forKey: "format")
+            updateScreenPreviewLayout()
+        }
+    }
+    /// Colour adjustments for you (the cutout).
+    var look: Look {
+        didSet {
+            if let data = try? JSONEncoder().encode(look) { UserDefaults.standard.set(data, forKey: "look") }
+            preview.setLook(look)
+        }
+    }
+    var lookName: String { Look.presets.first { $0.look == look }?.name ?? "Custom" }
 
     /// What gets recorded. Nil until the first refresh picks the display DemoRec is on.
     var target: CaptureTarget? {
@@ -58,16 +77,20 @@ final class RecorderModel {
     var styled: Bool {
         didSet {
             UserDefaults.standard.set(styled, forKey: "styled")
-            screenPreview.setStage(stage)
+            updateScreenPreviewLayout()
         }
     }
     /// Card tilt in degrees when styled; positive brings the left edge closer.
     var tilt: Double {
         didSet {
             UserDefaults.standard.set(tilt, forKey: "tilt")
-            screenPreview.setStage(stage)
+            updateScreenPreviewLayout()
         }
     }
+    private func updateScreenPreviewLayout() {
+        screenPreview.setLayout(stage: stage, canvas: format.size)
+    }
+
     private var stage: Stage? {
         guard styled else { return nil }
         var stage = Stage()
@@ -101,8 +124,11 @@ final class RecorderModel {
         styled = d.bool(forKey: "styled")
         tilt = d.object(forKey: "tilt") as? Double ?? Stage().tilt
         cameraID = d.string(forKey: "cameraID")
+        format = d.string(forKey: "format").flatMap(OutputFormat.init(rawValue:)) ?? .original
+        look = d.data(forKey: "look").flatMap { try? JSONDecoder().decode(Look.self, from: $0) } ?? Look()
         preview.setMirror(mirror)
-        screenPreview.setStage(stage)
+        preview.setLook(look)
+        updateScreenPreviewLayout()
         preview.onImage = { [weak self] in self?.previewImage = $0 }
         screenPreview.onImage = { [weak self] in self?.screenImage = $0 }
         refreshCameras()
@@ -260,8 +286,11 @@ final class RecorderModel {
         mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate()
         // Same margin the setup preview draws.
-        var layout = Layout(corner: corner, scale: size, margin: Self.margin(for: corner) * screen.pixelSize.height, mirror: mirror)
+        let frameHeight = format.size?.height ?? screen.pixelSize.height
+        var layout = Layout(corner: corner, scale: size, margin: Self.margin(for: corner) * frameHeight, mirror: mirror)
         layout.stage = stage
+        layout.canvas = format.size
+        layout.look = look
         task = Task {
             do {
                 try await screen.stop()

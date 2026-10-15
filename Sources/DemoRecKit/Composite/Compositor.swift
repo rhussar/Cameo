@@ -17,6 +17,7 @@ public final class Compositor {
                 .transformed(by: CGAffineTransform(translationX: cam.extent.width, y: 0))
             cam = cam.transformed(by: CGAffineTransform(translationX: -cam.extent.minX, y: 0))
         }
+        cam = adjusted(cam)
         guard let mask else { return cam }
         let sx = cam.extent.width / mask.extent.width
         let sy = cam.extent.height / mask.extent.height
@@ -35,26 +36,56 @@ public final class Compositor {
     }
 
     /// Builds the frame: the screen (flat, or staged as a card over a blurred backdrop) with the cutout in its corner.
+    /// With a canvas of a different shape, the screen is fitted inside it over a blurred copy of itself.
     public func compose(screen: CIImage, cutout: CIImage?) -> CIImage {
-        let base = layout.stage.map { stage(screen: screen, stage: $0) } ?? screen
+        let screen = screen.transformed(by: CGAffineTransform(translationX: -screen.extent.minX, y: -screen.extent.minY))
+        let frame = CGRect(origin: .zero, size: layout.canvas ?? screen.extent.size)
+        let base: CIImage
+        if let stage = layout.stage {
+            base = self.stage(screen: screen, stage: stage, frame: frame)
+        } else if frame.size == screen.extent.size {
+            base = screen
+        } else {
+            base = letterbox(screen: screen, frame: frame)
+        }
         guard let cutout else { return base }
         return place(cutout: cutout, over: base)
     }
 
-    /// Zoomed, blurred, dimmed copy of the screen filling the frame, with a rounded, tilted, shadowed card of the screen on top.
-    private func stage(screen: CIImage, stage: Stage) -> CIImage {
-        let frame = screen.extent
+    /// Brightness/contrast/saturation and warmth from `layout.look`.
+    private func adjusted(_ image: CIImage) -> CIImage {
+        let look = layout.look
+        guard !look.isNeutral else { return image }
+        var out = image
+        if look.brightness != 0 || look.contrast != 1 || look.saturation != 1 {
+            let cc = CIFilter.colorControls()
+            cc.inputImage = out
+            cc.brightness = Float(look.brightness * 0.25) // the filter's full range is far too strong for skin
+            cc.contrast = Float(look.contrast)
+            cc.saturation = Float(look.saturation)
+            out = cc.outputImage ?? out
+        }
+        if look.warmth != 0 {
+            let t = CIFilter.temperatureAndTint()
+            t.inputImage = out
+            t.neutral = CIVector(x: 6500, y: 0)
+            t.targetNeutral = CIVector(x: 6500 - look.warmth * 2500, y: 0) // a lower target reads warmer
+            out = t.outputImage ?? out
+        }
+        return out.cropped(to: image.extent)
+    }
+
+    /// The screen scaled to cover `frame`, zoomed, blurred and dimmed.
+    private func backdrop(screen: CIImage, frame: CGRect, zoom: CGFloat, blur: CGFloat, dim: CGFloat) -> CIImage {
         let W = frame.width
         let H = frame.height
-
-        // Backdrop: blur on a downscaled copy for speed, then scale back up.
-        let zoom = CGFloat(stage.backgroundZoom)
-        var backdrop = screen.transformed(by: CGAffineTransform(translationX: -W / 2, y: -H / 2))
-            .transformed(by: CGAffineTransform(scaleX: zoom, y: zoom))
-            .transformed(by: CGAffineTransform(translationX: W / 2, y: H / 2))
+        let cover = max(W / screen.extent.width, H / screen.extent.height) * zoom
+        var backdrop = screen.transformed(by: CGAffineTransform(scaleX: cover, y: cover))
+        backdrop = backdrop.transformed(by: CGAffineTransform(translationX: (W - backdrop.extent.width) / 2, y: (H - backdrop.extent.height) / 2))
             .cropped(to: frame)
+        // Blur on a downscaled copy for speed, then scale back up.
         let down: CGFloat = 8
-        let sigma = CGFloat(stage.backgroundBlur) * H
+        let sigma = blur * H
         if sigma > 0 {
             backdrop = backdrop
                 .transformed(by: CGAffineTransform(scaleX: 1 / down, y: 1 / down))
@@ -64,19 +95,39 @@ public final class Compositor {
                 .transformed(by: CGAffineTransform(scaleX: down, y: down))
                 .cropped(to: frame)
         }
-        if stage.backgroundDim > 0 {
-            let k = CGFloat(1 - stage.backgroundDim)
-            let dim = CIFilter.colorMatrix()
-            dim.inputImage = backdrop
-            dim.rVector = CIVector(x: k, y: 0, z: 0, w: 0)
-            dim.gVector = CIVector(x: 0, y: k, z: 0, w: 0)
-            dim.bVector = CIVector(x: 0, y: 0, z: k, w: 0)
-            backdrop = dim.outputImage ?? backdrop
+        if dim > 0 {
+            let k = 1 - dim
+            let m = CIFilter.colorMatrix()
+            m.inputImage = backdrop
+            m.rVector = CIVector(x: k, y: 0, z: 0, w: 0)
+            m.gVector = CIVector(x: 0, y: k, z: 0, w: 0)
+            m.bVector = CIVector(x: 0, y: 0, z: k, w: 0)
+            backdrop = m.outputImage ?? backdrop
         }
+        return backdrop
+    }
 
-        // Card geometry.
-        let cardH = CGFloat(stage.inset) * H
-        let cardW = cardH * W / H
+    /// Flat screen fitted and centred in a differently shaped frame, over a blurred copy of itself.
+    private func letterbox(screen: CIImage, frame: CGRect) -> CIImage {
+        let d = Stage()
+        let back = backdrop(screen: screen, frame: frame, zoom: CGFloat(d.backgroundZoom), blur: CGFloat(d.backgroundBlur), dim: CGFloat(d.backgroundDim))
+        let fit = min(frame.width / screen.extent.width, frame.height / screen.extent.height)
+        var fitted = screen.transformed(by: CGAffineTransform(scaleX: fit, y: fit))
+        fitted = fitted.transformed(by: CGAffineTransform(translationX: (frame.width - fitted.extent.width) / 2, y: (frame.height - fitted.extent.height) / 2))
+        return fitted.composited(over: back).cropped(to: frame)
+    }
+
+    /// Zoomed, blurred, dimmed copy of the screen filling the frame, with a rounded, tilted, shadowed card of the screen on top.
+    private func stage(screen: CIImage, stage: Stage, frame: CGRect) -> CIImage {
+        let W = frame.width
+        let H = frame.height
+        let backdrop = self.backdrop(screen: screen, frame: frame, zoom: CGFloat(stage.backgroundZoom),
+                                     blur: CGFloat(stage.backgroundBlur), dim: CGFloat(stage.backgroundDim))
+
+        // Card geometry: the screen fitted in the frame, then inset.
+        let fit = min(W / screen.extent.width, H / screen.extent.height)
+        let cardH = CGFloat(stage.inset) * fit * screen.extent.height
+        let cardW = CGFloat(stage.inset) * fit * screen.extent.width
         let cardRect = CGRect(x: 0, y: 0, width: cardW, height: cardH)
         let radius = CGFloat(stage.cornerRadius) * H
         let rr = CIFilter.roundedRectangleGenerator()
@@ -108,7 +159,7 @@ public final class Compositor {
         }
 
         // Card: scaled screen with rounded corners.
-        let s = cardH / H
+        let s = cardH / screen.extent.height
         var card = screen.transformed(by: CGAffineTransform(scaleX: s, y: s)).cropped(to: cardRect)
         if let roundedMask {
             let blend = CIFilter.blendWithMask()

@@ -17,6 +17,12 @@ where you appear, drag the slider to set your size, and hit **Start Recording**.
 Click **Stop** and the app makes `final.mp4`, then offers **Play** and **Show in Finder**.
 Recordings go to `~/Movies/DemoRec/<timestamp>/`.
 
+The size menu picks the video's frame: Original, YouTube 4K or 1440p (16:9), X 1080p (16:9), or
+LinkedIn 1080p (16:9), square (1:1) or portrait (4:5). When your screen is a different shape
+(e.g. ultrawide), it's fitted inside the frame over a blurred copy of itself. **Look** has colour
+presets (Natural, Bright, Warm, Cool, Vivid, Mono) and brightness / contrast / colour / warmth
+sliders for you; the preview updates live. The CLI takes the same as `--format` and `--look`.
+
 ## Build (CLI)
 
 ```bash

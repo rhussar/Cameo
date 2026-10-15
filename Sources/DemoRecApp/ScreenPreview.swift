@@ -14,12 +14,14 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     private var stream: SCStream?
     private var generation = 0
     private var stage: Stage? // queue only
+    private var canvas: CGSize? // queue only
     private var lastFrame: CIImage? // queue only
 
-    /// Styles the preview like the final video. Re-renders the last frame, since a still screen sends no new ones.
-    func setStage(_ value: Stage?) {
+    /// Styles and frames the preview like the final video. Re-renders the last frame, since a still screen sends no new ones.
+    func setLayout(stage: Stage?, canvas: CGSize?) {
         queue.async {
-            self.stage = value
+            self.stage = stage
+            self.canvas = canvas
             if let frame = self.lastFrame { self.render(frame) }
         }
     }
@@ -78,9 +80,14 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
 
     private func render(_ frame: CIImage) {
         var cg = frame.cgImage
-        if let stage {
+        if stage != nil || canvas != nil {
             var layout = Layout()
             layout.stage = stage
+            // Same shape as the output, at preview resolution.
+            if let canvas {
+                let s = min(1, 1600 / max(canvas.width, canvas.height))
+                layout.canvas = CGSize(width: (canvas.width * s).rounded(), height: (canvas.height * s).rounded())
+            }
             let styled = Compositor(layout: layout).compose(screen: frame, cutout: nil)
             cg = ciContext.createCGImage(styled, from: styled.extent)
         }

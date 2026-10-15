@@ -42,8 +42,13 @@ public final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         guard let display = displays.first(where: { $0.displayID == (displayID ?? CGMainDisplayID()) }) ?? displays.first else {
             throw DemoRecError("No display found")
         }
-        if excludingCurrentApp, let me = content.applications.first(where: { $0.processID == getpid() }) {
-            return SCContentFilter(display: display, excludingApplications: [me], exceptingWindows: [])
+        if excludingCurrentApp {
+            // The on-screen-only list misses this app until its window is up (e.g. right at launch),
+            // so look it up in the full list; excluding the app also covers windows it opens later.
+            let all = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            if let me = all.applications.first(where: { $0.processID == getpid() }) {
+                return SCContentFilter(display: display, excludingApplications: [me], exceptingWindows: [])
+            }
         }
         return SCContentFilter(display: display, excludingWindows: [])
     }

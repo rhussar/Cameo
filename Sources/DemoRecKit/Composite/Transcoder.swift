@@ -76,11 +76,15 @@ public final class Transcoder {
 
         var outW = Int(screenSize.width)
         var outH = Int(screenSize.height)
-        if let outputHeight, outputHeight < outH {
+        if let canvas = layout.canvas {
+            // The compositor already renders at the canvas size.
+            outW = Int(canvas.width) & ~1
+            outH = Int(canvas.height) & ~1
+        } else if let outputHeight, outputHeight < outH {
             outW = Int((Double(outW) * Double(outputHeight) / Double(outH)).rounded()) & ~1
             outH = outputHeight & ~1
         }
-        let outputScale = CGFloat(outH) / screenSize.height
+        let outputScale = layout.canvas == nil ? CGFloat(outH) / screenSize.height : 1
         let useHEVC = outW > 4096 || outH > 4096
         print("output: \(outW)x\(outH) @ \(fps) fps, \(useHEVC ? "HEVC" : "H.264")")
 

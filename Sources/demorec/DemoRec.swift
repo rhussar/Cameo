@@ -82,6 +82,8 @@ struct Composite: AsyncParsableCommand {
     @Option(help: "Output frame rate.") var fps: Int = 30
     @Option(name: .customLong("output-height"), help: "Downscale the output to this height (keeps aspect). Default: native screen size.") var outputHeight: Int?
     @Option(help: "Output file. Default: final.mp4 in the session folder.") var output: String?
+    @Option(help: "Frame size preset: \(OutputFormat.allCases.map(\.rawValue).joined(separator: ", ")).") var format: OutputFormat = .original
+    @Option(help: "Look preset for you: \(Look.presets.map { $0.name.lowercased() }.joined(separator: ", ")).") var look: String = "natural"
 
     @Flag(help: "Flat layout: full-frame screen with no backdrop, card or tilt.") var flat = false
     @Option(help: "Card height as a fraction of the frame height.") var inset: Double = 0.88
@@ -102,6 +104,11 @@ struct Composite: AsyncParsableCommand {
         }
         let outURL = output.map { URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath) } ?? dir.appendingPathComponent("final.mp4")
         var layout = Layout(corner: corner, scale: scale, margin: margin, feather: feather, mirror: mirror)
+        layout.canvas = format.size
+        guard let preset = Look.presets.first(where: { $0.name.lowercased() == look.lowercased() }) else {
+            throw DemoRecError("unknown look \"\(look)\"")
+        }
+        layout.look = preset.look
         if !flat {
             var stage = Stage()
             stage.inset = inset
@@ -134,3 +141,4 @@ func waitForInterrupt() async {
 
 extension Corner: ExpressibleByArgument {}
 extension MaskQuality: ExpressibleByArgument {}
+extension OutputFormat: ExpressibleByArgument {}

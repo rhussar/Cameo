@@ -6,15 +6,18 @@ struct ContentView: View {
     @Bindable var model: RecorderModel
 
     var body: some View {
-        VStack(spacing: 14) {
+        let wide = model.windowWidth >= 1400
+        VStack(spacing: wide ? 18 : 14) {
             Preview(model: model)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             BottomBar(model: model)
+                .controlSize(wide ? .large : .regular)
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, wide ? 28 : 20)
         .padding(.top, 36) // room for the window buttons
-        .padding(.bottom, 18)
-        .frame(minWidth: 720, minHeight: 500)
+        .padding(.bottom, wide ? 24 : 18)
+        .frame(minWidth: 640, minHeight: 500)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { model.windowWidth = $0 }
         .background(WindowConfigurator { model.mainWindow = $0 })
         .onAppear(perform: model.appeared)
     }
@@ -32,35 +35,75 @@ private struct BottomBar: View {
                 if case .failed(let msg, let needsSettings) = model.phase {
                     Notice(text: msg, action: needsSettings ? ("Open Settings", { model.openPrivacySettings() }) : nil)
                 }
-                HStack(spacing: 16) {
-                    SourcePicker(model: model)
-                    CameraPicker(model: model)
-                    SizeSlider(size: $model.size)
-                    Toggle(isOn: $model.mirror) {
-                        Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+                // One row when it fits; otherwise "what" on top and "how it looks" + Record below.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: spacing) {
+                        sources
+                        adjustments
+                        Spacer(minLength: 8)
+                        primary
                     }
-                    .toggleStyle(.button)
-                    .help("Mirror camera")
-                    Toggle(isOn: $model.styled) {
-                        Image(systemName: "rectangle.on.rectangle.angled")
-                    }
-                    .toggleStyle(.button)
-                    .help("Styled: screen as a tilted card over a blurred backdrop")
-                    if model.styled {
-                        TiltSlider(tilt: $model.tilt)
-                    }
-                    Spacer(minLength: 8)
-                    if case .countdown = model.phase {
-                        PrimaryButton(title: "Cancel", systemImage: nil, tint: .secondary, action: model.cancelCountdown)
-                            .keyboardShortcut(.cancelAction)
-                    } else {
-                        PrimaryButton(title: "Start Recording", systemImage: "record.circle", tint: .red, action: model.record)
-                            .keyboardShortcut(.defaultAction)
+                    VStack(spacing: 10) {
+                        HStack(spacing: spacing) {
+                            sources
+                            Spacer(minLength: 0)
+                        }
+                        HStack(spacing: spacing) {
+                            adjustments
+                            Spacer(minLength: 8)
+                            primary
+                        }
                     }
                 }
                 .disabled(!model.isSetup)
             }
         case .processing(let p):
+            processing(p)
+        case .done:
+            done
+        }
+    }
+
+    private var wide: Bool { model.windowWidth >= 1400 }
+    private var spacing: CGFloat { wide ? 20 : 14 }
+
+    /// What you're recording, what shape the video is, and which camera.
+    @ViewBuilder private var sources: some View {
+        SourcePicker(model: model)
+        FormatPicker(model: model)
+        CameraPicker(model: model)
+    }
+
+    /// How it looks.
+    @ViewBuilder private var adjustments: some View {
+        LookButton(model: model)
+        SizeSlider(size: $model.size, width: wide ? 150 : 100)
+        Toggle(isOn: $model.mirror) {
+            Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+        }
+        .toggleStyle(.button)
+        .help("Mirror camera")
+        Toggle(isOn: $model.styled) {
+            Image(systemName: "rectangle.on.rectangle.angled")
+        }
+        .toggleStyle(.button)
+        .help("Styled: screen as a tilted card over a blurred backdrop")
+        if model.styled {
+            TiltSlider(tilt: $model.tilt, width: wide ? 130 : 90)
+        }
+    }
+
+    @ViewBuilder private var primary: some View {
+        if case .countdown = model.phase {
+            PrimaryButton(title: "Cancel", systemImage: nil, tint: .secondary, wide: wide, action: model.cancelCountdown)
+                .keyboardShortcut(.cancelAction)
+        } else {
+            PrimaryButton(title: "Start Recording", systemImage: "record.circle", tint: .red, wide: wide, action: model.record)
+                .keyboardShortcut(.defaultAction)
+        }
+    }
+
+    private func processing(_ p: Double) -> some View {
             HStack(spacing: 14) {
                 ProgressView(value: p).tint(.red)
                 Text("Making your video… \(Int(p * 100))%")
@@ -68,14 +111,125 @@ private struct BottomBar: View {
                     .frame(width: 190, alignment: .leading)
             }
             .frame(height: 34)
-        case .done:
-            HStack(spacing: 10) {
-                Button("Record another", action: model.reset).buttonStyle(.link)
-                Spacer()
-                PrimaryButton(title: "Show in Finder", systemImage: "folder", tint: .secondary, action: model.revealInFinder)
-                PrimaryButton(title: "Play", systemImage: "play.fill", tint: .accentColor, action: model.play)
-                    .keyboardShortcut(.defaultAction)
+    }
+
+    private var done: some View {
+        HStack(spacing: 10) {
+            Button("Record another", action: model.reset).buttonStyle(.link)
+            Spacer()
+            PrimaryButton(title: "Show in Finder", systemImage: "folder", tint: .secondary, wide: wide, action: model.revealInFinder)
+            PrimaryButton(title: "Play", systemImage: "play.fill", tint: .accentColor, wide: wide, action: model.play)
+                .keyboardShortcut(.defaultAction)
+        }
+    }
+}
+
+/// The video's frame size, grouped by where it's going.
+private struct FormatPicker: View {
+    @Bindable var model: RecorderModel
+
+    var body: some View {
+        Menu {
+            item(.original)
+            ForEach(["YouTube", "X", "LinkedIn"], id: \.self) { platform in
+                Section(platform) {
+                    ForEach(OutputFormat.allCases.filter { $0.platform == platform }, id: \.self) { item($0) }
+                }
             }
+        } label: {
+            Label(label, systemImage: "aspectratio")
+        }
+        .menuStyle(.button)
+        .fixedSize()
+        .help(sizeHelp)
+    }
+
+    private var label: String {
+        let f = model.format
+        return f == .original ? "Original size" : "\(f.platform) \(f.name)"
+    }
+
+    private var sizeHelp: String {
+        guard let s = model.format.size else { return "Video size: same as what you record" }
+        return "Video size: \(Int(s.width)) × \(Int(s.height))"
+    }
+
+    private func item(_ f: OutputFormat) -> some View {
+        Button {
+            model.format = f
+        } label: {
+            Image(systemName: f == model.format ? "checkmark" : "")
+            Text(f.name)
+            Text(f.note)
+        }
+    }
+}
+
+/// Colour presets and sliders for how you look.
+private struct LookButton: View {
+    @Bindable var model: RecorderModel
+
+    var body: some View {
+        Button {
+            model.lookOpen.toggle()
+        } label: {
+            Label(model.lookName, systemImage: "camera.filters")
+        }
+        .help("Adjust how you look")
+        .popover(isPresented: $model.lookOpen, arrowEdge: .top) {
+            LookPanel(model: model)
+        }
+    }
+}
+
+private struct LookPanel: View {
+    @Bindable var model: RecorderModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Your look").font(.headline)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                ForEach(Look.presets, id: \.name) { preset in
+                    let selected = preset.look == model.look
+                    Button {
+                        withAnimation(.easeOut(duration: 0.15)) { model.look = preset.look }
+                    } label: {
+                        Text(preset.name).frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(selected ? .accentColor : nil)
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor, lineWidth: selected ? 1.5 : 0))
+                }
+            }
+            Divider()
+            LookSlider(title: "Brightness", icon: "sun.max", value: $model.look.brightness, range: -1...1)
+            LookSlider(title: "Contrast", icon: "circle.lefthalf.filled", value: $model.look.contrast, range: 0.5...1.5)
+            LookSlider(title: "Colour", icon: "paintpalette", value: $model.look.saturation, range: 0...2)
+            LookSlider(title: "Warmth", icon: "thermometer.medium", value: $model.look.warmth, range: -1...1)
+            HStack {
+                Text("Shows live in the preview").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Reset") { model.look = Look() }
+                    .disabled(model.look.isNeutral)
+            }
+        }
+        .padding(16)
+        .frame(width: 320)
+        .controlSize(.regular)
+    }
+}
+
+private struct LookSlider: View {
+    let title: String
+    let icon: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Label(title, systemImage: icon)
+                .frame(width: 104, alignment: .leading)
+            Slider(value: $value, in: range)
         }
     }
 }
@@ -144,11 +298,12 @@ private struct CameraPicker: View {
 
 private struct SizeSlider: View {
     @Binding var size: Double
+    let width: CGFloat
 
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "person.fill").font(.system(size: 9))
-            Slider(value: $size, in: 0.2...0.6).frame(width: 100)
+            Slider(value: $size, in: 0.2...0.6).frame(width: width)
             Image(systemName: "person.fill").font(.system(size: 14))
         }
         .foregroundStyle(.secondary)
@@ -159,11 +314,12 @@ private struct SizeSlider: View {
 /// Shown while Styled is on.
 private struct TiltSlider: View {
     @Binding var tilt: Double
+    let width: CGFloat
 
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "rotate.3d")
-            Slider(value: $tilt, in: -15...15).frame(width: 90)
+            Slider(value: $tilt, in: -15...15).frame(width: width)
         }
         .foregroundStyle(.secondary)
         .help("Tilt: \(Int(tilt.rounded()))°")
@@ -306,6 +462,7 @@ private struct PrimaryButton: View {
     let title: String
     let systemImage: String?
     let tint: Color
+    var wide = false
     let action: () -> Void
 
     var body: some View {
@@ -315,9 +472,9 @@ private struct PrimaryButton: View {
             } icon: {
                 if let systemImage { Image(systemName: systemImage) }
             }
-            .font(.system(size: 14, weight: .semibold))
-            .frame(minWidth: 150)
-            .padding(.vertical, 4)
+            .font(.system(size: wide ? 16 : 14, weight: .semibold))
+            .frame(minWidth: wide ? 190 : 150)
+            .padding(.vertical, wide ? 6 : 4)
         }
         .buttonStyle(.borderedProminent)
         .buttonBorderShape(.capsule)
