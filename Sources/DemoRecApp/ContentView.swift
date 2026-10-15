@@ -46,6 +46,9 @@ private struct BottomBar: View {
                     }
                     .toggleStyle(.button)
                     .help("Styled: screen as a tilted card over a blurred backdrop")
+                    if model.styled {
+                        TiltSlider(tilt: $model.tilt)
+                    }
                     Spacer(minLength: 8)
                     if case .countdown = model.phase {
                         PrimaryButton(title: "Cancel", systemImage: nil, tint: .secondary, action: model.cancelCountdown)
@@ -150,6 +153,20 @@ private struct SizeSlider: View {
         }
         .foregroundStyle(.secondary)
         .help("Your size")
+    }
+}
+
+/// Shown while Styled is on.
+private struct TiltSlider: View {
+    @Binding var tilt: Double
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "rotate.3d")
+            Slider(value: $tilt, in: -15...15).frame(width: 90)
+        }
+        .foregroundStyle(.secondary)
+        .help("Tilt: \(Int(tilt.rounded()))°")
     }
 }
 

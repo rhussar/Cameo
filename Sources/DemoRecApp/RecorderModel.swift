@@ -58,8 +58,21 @@ final class RecorderModel {
     var styled: Bool {
         didSet {
             UserDefaults.standard.set(styled, forKey: "styled")
-            screenPreview.setStage(styled ? Stage() : nil)
+            screenPreview.setStage(stage)
         }
+    }
+    /// Card tilt in degrees when styled; positive brings the left edge closer.
+    var tilt: Double {
+        didSet {
+            UserDefaults.standard.set(tilt, forKey: "tilt")
+            screenPreview.setStage(stage)
+        }
+    }
+    private var stage: Stage? {
+        guard styled else { return nil }
+        var stage = Stage()
+        stage.tilt = tilt
+        return stage
     }
 
     var isSetup: Bool {
@@ -86,9 +99,10 @@ final class RecorderModel {
         size = d.object(forKey: "size") as? Double ?? 0.35
         mirror = d.bool(forKey: "mirror")
         styled = d.bool(forKey: "styled")
+        tilt = d.object(forKey: "tilt") as? Double ?? Stage().tilt
         cameraID = d.string(forKey: "cameraID")
         preview.setMirror(mirror)
-        screenPreview.setStage(styled ? Stage() : nil)
+        screenPreview.setStage(stage)
         preview.onImage = { [weak self] in self?.previewImage = $0 }
         screenPreview.onImage = { [weak self] in self?.screenImage = $0 }
         refreshCameras()
@@ -247,7 +261,7 @@ final class RecorderModel {
         NSApp.activate()
         // Same margin the setup preview draws.
         var layout = Layout(corner: corner, scale: size, margin: Self.margin(for: corner) * screen.pixelSize.height, mirror: mirror)
-        if styled { layout.stage = Stage() }
+        layout.stage = stage
         task = Task {
             do {
                 try await screen.stop()
