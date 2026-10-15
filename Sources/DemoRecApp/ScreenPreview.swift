@@ -13,6 +13,16 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     private let ciContext: CIContext = MTLCreateSystemDefaultDevice().map { CIContext(mtlDevice: $0) } ?? CIContext()
     private var stream: SCStream?
     private var generation = 0
+    private var stage: Stage? // queue only
+    private var lastFrame: CIImage? // queue only
+
+    /// Styles the preview like the final video. Re-renders the last frame, since a still screen sends no new ones.
+    func setStage(_ value: Stage?) {
+        queue.async {
+            self.stage = value
+            if let frame = self.lastFrame { self.render(frame) }
+        }
+    }
 
     @MainActor
     func start(target: CaptureTarget?) async throws {
@@ -58,8 +68,23 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
               let statusRaw = attachments.first?[.status] as? Int,
               SCFrameStatus(rawValue: statusRaw) == .complete,
               let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        let image = CIImage(cvPixelBuffer: pb)
-        guard let cg = ciContext.createCGImage(image, from: image.extent) else { return }
+        // Copy out of the pixel buffer so holding the last frame doesn't starve the stream's buffer pool.
+        let buffer = CIImage(cvPixelBuffer: pb)
+        guard let raw = ciContext.createCGImage(buffer, from: buffer.extent) else { return }
+        let frame = CIImage(cgImage: raw)
+        lastFrame = frame
+        render(frame)
+    }
+
+    private func render(_ frame: CIImage) {
+        var cg = frame.cgImage
+        if let stage {
+            var layout = Layout()
+            layout.stage = stage
+            let styled = Compositor(layout: layout).compose(screen: frame, cutout: nil)
+            cg = ciContext.createCGImage(styled, from: styled.extent)
+        }
+        guard let cg else { return }
         DispatchQueue.main.async { self.onImage?(cg) }
     }
 

@@ -20,7 +20,7 @@ final class RecorderModel {
     var previewImage: CGImage?
     var cameraDenied = false
     var thumbnail: CGImage?
-    var stageHovering = false
+    var previewHovering = false
 
     /// What gets recorded. Nil until the first refresh picks the display DemoRec is on.
     var target: CaptureTarget? {
@@ -54,6 +54,13 @@ final class RecorderModel {
             preview.setMirror(mirror)
         }
     }
+    /// Present the screen as a rounded, tilted card over a blurred backdrop.
+    var styled: Bool {
+        didSet {
+            UserDefaults.standard.set(styled, forKey: "styled")
+            screenPreview.setStage(styled ? Stage() : nil)
+        }
+    }
 
     var isSetup: Bool {
         switch phase {
@@ -78,8 +85,10 @@ final class RecorderModel {
         corner = d.string(forKey: "corner").flatMap(Corner.init(rawValue:)) ?? .bottomRight
         size = d.object(forKey: "size") as? Double ?? 0.35
         mirror = d.bool(forKey: "mirror")
+        styled = d.bool(forKey: "styled")
         cameraID = d.string(forKey: "cameraID")
         preview.setMirror(mirror)
+        screenPreview.setStage(styled ? Stage() : nil)
         preview.onImage = { [weak self] in self?.previewImage = $0 }
         screenPreview.onImage = { [weak self] in self?.screenImage = $0 }
         refreshCameras()
@@ -237,7 +246,8 @@ final class RecorderModel {
         mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate()
         // Same margin the setup preview draws: 2.5% of the recording's height.
-        let layout = Layout(corner: corner, scale: size, margin: 0.025 * screen.pixelSize.height, mirror: mirror)
+        var layout = Layout(corner: corner, scale: size, margin: 0.025 * screen.pixelSize.height, mirror: mirror)
+        if styled { layout.stage = Stage() }
         task = Task {
             do {
                 try await screen.stop()

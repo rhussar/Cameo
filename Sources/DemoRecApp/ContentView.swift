@@ -7,7 +7,7 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            Stage(model: model)
+            Preview(model: model)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             BottomBar(model: model)
         }
@@ -41,6 +41,11 @@ private struct BottomBar: View {
                     }
                     .toggleStyle(.button)
                     .help("Mirror camera")
+                    Toggle(isOn: $model.styled) {
+                        Image(systemName: "rectangle.on.rectangle.angled")
+                    }
+                    .toggleStyle(.button)
+                    .help("Styled: screen as a tilted card over a blurred backdrop")
                     Spacer(minLength: 8)
                     if case .countdown = model.phase {
                         PrimaryButton(title: "Cancel", systemImage: nil, tint: .secondary, action: model.cancelCountdown)
@@ -148,13 +153,13 @@ private struct SizeSlider: View {
     }
 }
 
-// MARK: - Stage
+// MARK: - Preview
 
 /// A live miniature of the final video: what you're recording, with you in the corner.
 /// Click a corner to move yourself.
-private struct Stage: View {
+private struct Preview: View {
     @Bindable var model: RecorderModel
-    private var hovering: Bool { model.stageHovering }
+    private var hovering: Bool { model.previewHovering }
 
     var body: some View {
         GeometryReader { geo in
@@ -189,7 +194,7 @@ private struct Stage: View {
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.white.opacity(0.08)))
             .contentShape(Rectangle())
-            .onHover { model.stageHovering = $0 }
+            .onHover { model.previewHovering = $0 }
             .onTapGesture { loc in
                 guard model.isSetup else { return }
                 let left = loc.x < geo.size.width / 2
