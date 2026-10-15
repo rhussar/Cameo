@@ -241,7 +241,7 @@ private struct Preview: View {
 
     @ViewBuilder private func presenter(in size: CGSize) -> some View {
         let h = size.height * model.size
-        let margin = size.height * 0.025
+        let margin = size.height * RecorderModel.margin(for: model.corner)
         if model.cameraDenied {
             VStack(spacing: 8) {
                 Text("DemoRec needs your camera").foregroundStyle(.white)
@@ -269,7 +269,7 @@ private struct Preview: View {
                 .fill(.black.opacity(c == model.corner ? 0 : 0.18))
                 .strokeBorder(.white.opacity(c == model.corner ? 0 : 0.6), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
                 .frame(width: w, height: h)
-                .position(position(corner: c, w: w, h: h, margin: size.height * 0.025, in: size))
+                .position(position(corner: c, w: w, h: h, margin: size.height * RecorderModel.margin(for: c), in: size))
         }
     }
 

@@ -245,8 +245,8 @@ final class RecorderModel {
         pill.hide()
         mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate()
-        // Same margin the setup preview draws: 2.5% of the recording's height.
-        var layout = Layout(corner: corner, scale: size, margin: 0.025 * screen.pixelSize.height, mirror: mirror)
+        // Same margin the setup preview draws.
+        var layout = Layout(corner: corner, scale: size, margin: Self.margin(for: corner) * screen.pixelSize.height, mirror: mirror)
         if styled { layout.stage = Stage() }
         task = Task {
             do {
@@ -302,6 +302,15 @@ final class RecorderModel {
     }
 
     // MARK: Helpers
+
+    /// Cutout inset as a fraction of the frame height. In a bottom corner you sit flush on the frame's edges,
+    /// so where the camera crops your body lines up with the edge of the video; up top you get a little room.
+    static func margin(for corner: Corner) -> Double {
+        switch corner {
+        case .bottomLeft, .bottomRight: 0
+        case .topLeft, .topRight: 0.025
+        }
+    }
 
     /// The display the DemoRec window is on, so you record the screen you're looking at.
     private func currentDisplayID() -> CGDirectDisplayID? {
