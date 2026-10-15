@@ -11,7 +11,8 @@ struct DemoRecApp: App {
             ContentView(model: model)
         }
         .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 1100, height: 760)
     }
 }
 

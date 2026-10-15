@@ -26,22 +26,37 @@ public final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         return content.displays
     }
 
-    /// `excludingCurrentApp` keeps the calling app's own windows (e.g. the recording controls) out of the video.
-    public func start(displayID: CGDirectDisplayID?, excludingCurrentApp: Bool = false) async throws {
+    /// Builds the capture filter for a target. Nil means the main display.
+    /// `excludingCurrentApp` keeps the calling app's own windows (e.g. the recording controls) out of a display capture.
+    public static func filter(for target: CaptureTarget?, excludingCurrentApp: Bool) async throws -> SCContentFilter {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        if case .window(let id) = target {
+            guard let window = content.windows.first(where: { $0.windowID == id }) else {
+                throw DemoRecError("That window is no longer open. Pick another one.")
+            }
+            return SCContentFilter(desktopIndependentWindow: window)
+        }
+        var displayID: CGDirectDisplayID?
+        if case .display(let id) = target { displayID = id }
         let displays = content.displays
-        guard let display = displays.first(where: { displayID == nil || $0.displayID == displayID }) ?? displays.first else {
+        guard let display = displays.first(where: { $0.displayID == (displayID ?? CGMainDisplayID()) }) ?? displays.first else {
             throw DemoRecError("No display found")
         }
-        let filter: SCContentFilter
         if excludingCurrentApp, let me = content.applications.first(where: { $0.processID == getpid() }) {
-            filter = SCContentFilter(display: display, excludingApplications: [me], exceptingWindows: [])
-        } else {
-            filter = SCContentFilter(display: display, excludingWindows: [])
+            return SCContentFilter(display: display, excludingApplications: [me], exceptingWindows: [])
         }
-        let scale = filter.pointPixelScale
-        let width = Int(CGFloat(display.width) * CGFloat(scale))
-        let height = Int(CGFloat(display.height) * CGFloat(scale))
+        return SCContentFilter(display: display, excludingWindows: [])
+    }
+
+    public func start(displayID: CGDirectDisplayID?, excludingCurrentApp: Bool = false) async throws {
+        try await start(target: displayID.map { .display($0) }, excludingCurrentApp: excludingCurrentApp)
+    }
+
+    public func start(target: CaptureTarget?, excludingCurrentApp: Bool = false) async throws {
+        let filter = try await Self.filter(for: target, excludingCurrentApp: excludingCurrentApp)
+        let scale = CGFloat(filter.pointPixelScale)
+        let width = Int(filter.contentRect.width * scale) & ~1
+        let height = Int(filter.contentRect.height * scale) & ~1
         pixelSize = CGSize(width: width, height: height)
 
         let cfg = SCStreamConfiguration()
@@ -101,6 +116,12 @@ public final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         await writer.finishWriting()
         if let error = writer.error { throw error }
     }
+}
+
+/// What to record: a whole display or a single window.
+public enum CaptureTarget: Hashable, Sendable {
+    case display(CGDirectDisplayID)
+    case window(CGWindowID)
 }
 
 public struct DemoRecError: Error, CustomStringConvertible {

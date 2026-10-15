@@ -6,74 +6,152 @@ struct ContentView: View {
     @Bindable var model: RecorderModel
 
     var body: some View {
-        Group {
-            if case .recording(let since) = model.phase {
-                RecordingPill(since: since, stop: model.stop)
-            } else {
-                MainPanel(model: model)
-            }
+        VStack(spacing: 14) {
+            Stage(model: model)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            BottomBar(model: model)
         }
-        .background(WindowConfigurator(compact: isRecording))
+        .padding(.horizontal, 20)
+        .padding(.top, 36) // room for the window buttons
+        .padding(.bottom, 18)
+        .frame(minWidth: 720, minHeight: 500)
+        .background(WindowConfigurator { model.mainWindow = $0 })
         .onAppear(perform: model.appeared)
-    }
-
-    private var isRecording: Bool {
-        if case .recording = model.phase { return true }
-        return false
     }
 }
 
-// MARK: - Main panel
+// MARK: - Bottom bar
 
-private struct MainPanel: View {
+private struct BottomBar: View {
     @Bindable var model: RecorderModel
 
     var body: some View {
-        VStack(spacing: 14) {
-            Stage(model: model)
-            footer
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 34) // room for the window buttons
-        .padding(.bottom, 20)
-        .frame(width: 420)
-    }
-
-    @ViewBuilder private var footer: some View {
         switch model.phase {
-        case .idle, .failed:
-            if case .failed(let msg, let needsSettings) = model.phase {
-                Notice(text: msg, action: needsSettings ? ("Open Settings", { model.openPrivacySettings() }) : nil)
+        case .idle, .failed, .countdown, .recording:
+            VStack(spacing: 10) {
+                if case .failed(let msg, let needsSettings) = model.phase {
+                    Notice(text: msg, action: needsSettings ? ("Open Settings", { model.openPrivacySettings() }) : nil)
+                }
+                HStack(spacing: 16) {
+                    SourcePicker(model: model)
+                    CameraPicker(model: model)
+                    SizeSlider(size: $model.size)
+                    Toggle(isOn: $model.mirror) {
+                        Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+                    }
+                    .toggleStyle(.button)
+                    .help("Mirror camera")
+                    Spacer(minLength: 8)
+                    if case .countdown = model.phase {
+                        PrimaryButton(title: "Cancel", systemImage: nil, tint: .secondary, action: model.cancelCountdown)
+                            .keyboardShortcut(.cancelAction)
+                    } else {
+                        PrimaryButton(title: "Start Recording", systemImage: "record.circle", tint: .red, action: model.record)
+                            .keyboardShortcut(.defaultAction)
+                    }
+                }
+                .disabled(!model.isSetup)
             }
-            Controls(model: model)
-            PrimaryButton(title: "Start Recording", systemImage: "record.circle", tint: .red, action: model.record)
-                .keyboardShortcut(.defaultAction)
-        case .countdown:
-            PrimaryButton(title: "Cancel", systemImage: nil, tint: .secondary, action: model.cancelCountdown)
-                .keyboardShortcut(.cancelAction)
         case .processing(let p):
-            VStack(spacing: 8) {
+            HStack(spacing: 14) {
                 ProgressView(value: p).tint(.red)
                 Text("Making your video… \(Int(p * 100))%")
                     .font(.callout).foregroundStyle(.secondary).monospacedDigit()
+                    .frame(width: 190, alignment: .leading)
             }
-            .padding(.vertical, 6)
+            .frame(height: 34)
         case .done:
             HStack(spacing: 10) {
+                Button("Record another", action: model.reset).buttonStyle(.link)
+                Spacer()
+                PrimaryButton(title: "Show in Finder", systemImage: "folder", tint: .secondary, action: model.revealInFinder)
                 PrimaryButton(title: "Play", systemImage: "play.fill", tint: .accentColor, action: model.play)
                     .keyboardShortcut(.defaultAction)
-                PrimaryButton(title: "Show in Finder", systemImage: "folder", tint: .secondary, action: model.revealInFinder)
             }
-            Button("Record another", action: model.reset)
-                .buttonStyle(.link)
-                .font(.callout)
-        case .recording:
-            EmptyView()
         }
     }
 }
 
-/// A miniature of your screen showing where (and how big) you'll appear. Click a corner to move yourself.
+/// "What am I recording?" — a whole screen, or one window (for a browser, that's its current tab).
+private struct SourcePicker: View {
+    @Bindable var model: RecorderModel
+
+    var body: some View {
+        Menu {
+            Section("Screens") {
+                ForEach(model.displaySources) { s in
+                    item(s, icon: "display")
+                }
+            }
+            if !model.windowSources.isEmpty {
+                Section("Windows") {
+                    ForEach(model.windowSources) { s in
+                        item(s, icon: "macwindow")
+                    }
+                }
+            }
+        } label: {
+            Label(label, systemImage: isWindow ? "macwindow" : "display")
+        }
+        .menuStyle(.button)
+        .fixedSize()
+        .help("Choose what to record")
+    }
+
+    private var isWindow: Bool {
+        if case .window = model.target { return true }
+        return false
+    }
+
+    private var label: String {
+        guard let s = model.selectedSource else { return "Choose screen" }
+        let text = s.subtitle.isEmpty || !isWindow ? s.title : "\(s.title) – \(s.subtitle)"
+        return text.count > 34 ? String(text.prefix(33)) + "…" : text
+    }
+
+    private func item(_ s: Source, icon: String) -> some View {
+        Button {
+            model.target = s.target
+        } label: {
+            let name = s.subtitle.isEmpty ? s.title : "\(s.title) – \(s.subtitle)"
+            Label(name, systemImage: s.target == model.target ? "checkmark" : icon)
+        }
+    }
+}
+
+private struct CameraPicker: View {
+    @Bindable var model: RecorderModel
+
+    var body: some View {
+        Picker(selection: $model.cameraID) {
+            ForEach(model.cameras, id: \.uniqueID) { Text($0.localizedName).tag(Optional($0.uniqueID)) }
+        } label: {
+            Image(systemName: "camera")
+        }
+        .pickerStyle(.menu)
+        .fixedSize()
+        .help("Camera")
+    }
+}
+
+private struct SizeSlider: View {
+    @Binding var size: Double
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "person.fill").font(.system(size: 9))
+            Slider(value: $size, in: 0.2...0.6).frame(width: 100)
+            Image(systemName: "person.fill").font(.system(size: 14))
+        }
+        .foregroundStyle(.secondary)
+        .help("Your size")
+    }
+}
+
+// MARK: - Stage
+
+/// A live miniature of the final video: what you're recording, with you in the corner.
+/// Click a corner to move yourself.
 private struct Stage: View {
     @Bindable var model: RecorderModel
     private var hovering: Bool { model.stageHovering }
@@ -81,8 +159,7 @@ private struct Stage: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(LinearGradient(colors: [Color(white: 0.22), Color(white: 0.12)], startPoint: .top, endPoint: .bottom))
+                background(in: geo.size)
 
                 switch model.phase {
                 case .done:
@@ -91,24 +168,26 @@ private struct Stage: View {
                             .frame(width: geo.size.width, height: geo.size.height).clipped()
                     }
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 44)).foregroundStyle(.white, .green)
+                        .font(.system(size: 56)).foregroundStyle(.white, .green)
                         .shadow(radius: 8)
-                case .processing:
+                case .processing, .recording:
+                    Rectangle().fill(.black.opacity(0.55))
                     Image(systemName: "wand.and.stars")
-                        .font(.system(size: 36, weight: .light)).foregroundStyle(.white.opacity(0.6))
+                        .font(.system(size: 44, weight: .light)).foregroundStyle(.white.opacity(0.8))
                         .symbolEffect(.pulse)
                 default:
-                    if hovering, model.isSetup { cornerTargets(in: geo.size) }
+                    if hovering { cornerTargets(in: geo.size) }
                     presenter(in: geo.size)
                     if case .countdown(let n) = model.phase {
                         Text("\(n)")
-                            .font(.system(size: 88, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white).shadow(radius: 10)
+                            .font(.system(size: 120, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white).shadow(radius: 12)
                             .contentTransition(.numericText(countsDown: true))
                     }
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.white.opacity(0.08)))
             .contentShape(Rectangle())
             .onHover { model.stageHovering = $0 }
             .onTapGesture { loc in
@@ -121,16 +200,38 @@ private struct Stage: View {
             }
         }
         .aspectRatio(model.screenAspect, contentMode: .fit)
-        .overlay(alignment: .bottom) {
+        .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+        .overlay(alignment: .top) {
             if model.isSetup {
                 Text("Click a corner to move yourself")
-                    .font(.caption).foregroundStyle(.white.opacity(hovering ? 0.7 : 0))
-                    .padding(.bottom, 8)
+                    .font(.caption.weight(.medium)).foregroundStyle(.white)
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(.black.opacity(0.5), in: Capsule())
+                    .padding(.top, 10)
+                    .opacity(hovering ? 1 : 0)
                     .allowsHitTesting(false)
             }
         }
         .animation(.easeOut(duration: 0.2), value: hovering)
         .animation(.spring(duration: 0.3), value: model.phase)
+    }
+
+    @ViewBuilder private func background(in size: CGSize) -> some View {
+        if let screen = model.screenImage {
+            Image(decorative: screen, scale: 1).resizable().interpolation(.high)
+                .frame(width: size.width, height: size.height)
+        } else {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(LinearGradient(colors: [Color(white: 0.22), Color(white: 0.12)], startPoint: .top, endPoint: .bottom))
+            if !model.screenAccess, model.isSetup {
+                VStack(spacing: 10) {
+                    Image(systemName: "display").font(.system(size: 30, weight: .light))
+                    Text("Allow screen access to see what you'll record")
+                    Button("Allow Screen Access", action: model.requestScreenAccess)
+                }
+                .foregroundStyle(.white.opacity(0.85))
+            }
+        }
     }
 
     @ViewBuilder private func presenter(in size: CGSize) -> some View {
@@ -141,6 +242,8 @@ private struct Stage: View {
                 Text("DemoRec needs your camera").foregroundStyle(.white)
                 Button("Open Settings") { model.openPrivacySettings(camera: true) }
             }
+            .padding(12)
+            .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
         } else if let img = model.previewImage {
             let w = h * CGFloat(img.width) / CGFloat(img.height)
             Image(decorative: img, scale: 1).resizable()
@@ -156,11 +259,12 @@ private struct Stage: View {
 
     private func cornerTargets(in size: CGSize) -> some View {
         ForEach(Corner.allCases, id: \.self) { c in
-            let w = size.width * 0.18, h = size.height * 0.18
-            RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(.white.opacity(c == model.corner ? 0 : 0.25), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            let w = size.width * 0.16, h = size.height * 0.16
+            RoundedRectangle(cornerRadius: 8)
+                .fill(.black.opacity(c == model.corner ? 0 : 0.18))
+                .strokeBorder(.white.opacity(c == model.corner ? 0 : 0.6), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
                 .frame(width: w, height: h)
-                .position(position(corner: c, w: w, h: h, margin: 8, in: size))
+                .position(position(corner: c, w: w, h: h, margin: size.height * 0.025, in: size))
         }
     }
 
@@ -174,38 +278,7 @@ private struct Stage: View {
     }
 }
 
-private struct Controls: View {
-    @Bindable var model: RecorderModel
-
-    var body: some View {
-        HStack(spacing: 14) {
-            Picker(selection: $model.cameraID) {
-                ForEach(model.cameras, id: \.uniqueID) { Text($0.localizedName).tag(Optional($0.uniqueID)) }
-            } label: {
-                Image(systemName: "camera")
-            }
-            .pickerStyle(.menu)
-            .fixedSize()
-
-            Spacer(minLength: 0)
-
-            HStack(spacing: 6) {
-                Image(systemName: "person.fill").font(.system(size: 9))
-                Slider(value: $model.size, in: 0.2...0.55).frame(width: 90)
-                Image(systemName: "person.fill").font(.system(size: 14))
-            }
-            .foregroundStyle(.secondary)
-            .help("Your size")
-
-            Toggle(isOn: $model.mirror) {
-                Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-            }
-            .toggleStyle(.button)
-            .help("Mirror camera")
-        }
-        .controlSize(.regular)
-    }
-}
+// MARK: - Bits
 
 private struct PrimaryButton: View {
     let title: String
@@ -221,8 +294,8 @@ private struct PrimaryButton: View {
                 if let systemImage { Image(systemName: systemImage) }
             }
             .font(.system(size: 14, weight: .semibold))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
+            .frame(minWidth: 150)
+            .padding(.vertical, 4)
         }
         .buttonStyle(.borderedProminent)
         .buttonBorderShape(.capsule)
@@ -247,59 +320,17 @@ private struct Notice: View {
     }
 }
 
-// MARK: - Recording pill
-
-private struct RecordingPill: View {
-    let since: Date
-    let stop: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "circle.fill")
-                .font(.system(size: 9)).foregroundStyle(.red)
-                .symbolEffect(.pulse)
-            TimelineView(.periodic(from: since, by: 1)) { ctx in
-                Text(elapsed(ctx.date)).font(.system(size: 15, weight: .medium)).monospacedDigit()
-            }
-            Button(action: stop) {
-                Label("Stop", systemImage: "stop.fill").font(.system(size: 13, weight: .semibold))
-            }
-            .buttonStyle(.borderedProminent)
-            .buttonBorderShape(.capsule)
-            .tint(.red)
-            .keyboardShortcut(.defaultAction)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .fixedSize()
-    }
-
-    private func elapsed(_ now: Date) -> String {
-        let s = max(0, Int(now.timeIntervalSince(since)))
-        return String(format: "%d:%02d", s / 60, s % 60)
-    }
-}
-
-// MARK: - Window
-
-/// While recording, the window becomes a small floating pill that follows you across Spaces.
+/// Hands the hosting NSWindow to the model and sets a few window traits SwiftUI doesn't expose.
 private struct WindowConfigurator: NSViewRepresentable {
-    let compact: Bool
+    let onWindow: (NSWindow) -> Void
 
     func makeNSView(context: Context) -> NSView { NSView() }
 
     func updateNSView(_ view: NSView, context: Context) {
         DispatchQueue.main.async {
             guard let window = view.window else { return }
-            window.isMovableByWindowBackground = true
             window.titlebarAppearsTransparent = true
-            window.sharingType = compact ? .none : .readOnly
-            window.level = compact ? .floating : .normal
-            window.collectionBehavior = compact ? [.canJoinAllSpaces, .fullScreenAuxiliary] : []
-            for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-                window.standardWindowButton(b)?.isHidden = compact
-            }
-            window.standardWindowButton(.zoomButton)?.isEnabled = false
+            onWindow(window)
         }
     }
 }

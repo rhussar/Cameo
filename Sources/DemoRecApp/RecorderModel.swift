@@ -22,6 +22,19 @@ final class RecorderModel {
     var thumbnail: CGImage?
     var stageHovering = false
 
+    /// What gets recorded. Nil until the first refresh picks the display DemoRec is on.
+    var target: CaptureTarget? {
+        didSet {
+            if case .display(let id) = target { UserDefaults.standard.set(Int(id), forKey: "displayID") }
+            if target != oldValue, isSetup { startScreenPreview() }
+        }
+    }
+    var displaySources: [Source] = []
+    var windowSources: [Source] = []
+    var screenImage: CGImage?
+    var screenAccess = CGPreflightScreenCaptureAccess()
+    var selectedSource: Source? { (displaySources + windowSources).first { $0.target == target } }
+
     var cameraID: String? {
         didSet {
             UserDefaults.standard.set(cameraID, forKey: "cameraID")
@@ -50,6 +63,10 @@ final class RecorderModel {
     }
 
     private let preview = CameraPreview()
+    private let screenPreview = ScreenPreview()
+    private let pill = PillPanel()
+    weak var mainWindow: NSWindow?
+    private var refreshLoop: Task<Void, Never>?
     private var task: Task<Void, Never>?
     private var screen: ScreenRecorder?
     private var camera: CameraRecorder?
@@ -64,6 +81,7 @@ final class RecorderModel {
         cameraID = d.string(forKey: "cameraID")
         preview.setMirror(mirror)
         preview.onImage = { [weak self] in self?.previewImage = $0 }
+        screenPreview.onImage = { [weak self] in self?.screenImage = $0 }
         refreshCameras()
         for name in [AVCaptureDevice.wasConnectedNotification, AVCaptureDevice.wasDisconnectedNotification] {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -91,6 +109,77 @@ final class RecorderModel {
                 cameraDenied = true
             }
         }
+        // Keep the screen/window list current while you're setting up (windows open and close).
+        refreshLoop?.cancel()
+        refreshLoop = Task {
+            while !Task.isCancelled {
+                if isSetup { await refreshSources() }
+                try? await Task.sleep(for: .seconds(3))
+            }
+        }
+    }
+
+    func requestScreenAccess() {
+        CGRequestScreenCaptureAccess()
+        Task { await refreshSources() }
+    }
+
+    func refreshSources() async {
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true) else {
+            screenAccess = false
+            return
+        }
+        let firstAccess = !screenAccess
+        screenAccess = true
+        let names = Dictionary(NSScreen.screens.compactMap { s in s.displayID.map { ($0, s.localizedName) } }, uniquingKeysWith: { a, _ in a })
+        displaySources = content.displays.map { d in
+            Source(target: .display(d.displayID), title: names[d.displayID] ?? "Display \(d.displayID)",
+                   subtitle: d.displayID == CGMainDisplayID() ? "Main screen" : "", frame: d.frame)
+        }
+        let hidden: Set<String> = ["com.apple.dock", "com.apple.WindowManager", "com.apple.controlcenter", "com.apple.notificationcenterui", Bundle.main.bundleIdentifier ?? ""]
+        windowSources = content.windows
+            .filter { w in
+                w.windowLayer == 0 && w.isOnScreen && w.frame.width >= 200 && w.frame.height >= 150
+                    && !(w.title ?? "").isEmpty // untitled windows are mostly invisible helper overlays
+                    && !hidden.contains(w.owningApplication?.bundleIdentifier ?? "")
+                    && w.owningApplication?.processID != getpid()
+            }
+            .map { w in
+                let app = w.owningApplication?.applicationName ?? "Window"
+                return Source(target: .window(w.windowID), title: app, subtitle: w.title ?? "", frame: w.frame)
+            }
+            .sorted { ($0.title.lowercased(), $0.subtitle) < ($1.title.lowercased(), $1.subtitle) }
+
+        // Pick a default, or fall back to a screen if the chosen window was closed.
+        if target == nil || selectedSource == nil {
+            let saved = UserDefaults.standard.object(forKey: "displayID") as? Int
+            let preferred = saved.map { CGDirectDisplayID($0) } ?? currentDisplayID()
+            target = (displaySources.first { $0.target == .display(preferred ?? 0) } ?? displaySources.first)?.target
+        } else if firstAccess, isSetup {
+            startScreenPreview()
+        }
+    }
+
+    private func startScreenPreview() {
+        screenImage = nil
+        let target = target
+        Task {
+            do {
+                try await screenPreview.start(target: target)
+            } catch {
+                await refreshSources()
+            }
+        }
+    }
+
+    private func startPreviews() {
+        preview.start(deviceID: cameraID)
+        startScreenPreview()
+    }
+
+    private func stopPreviews() async {
+        await preview.stop()
+        await screenPreview.stop()
     }
 
     // MARK: Recording
@@ -116,32 +205,39 @@ final class RecorderModel {
                 phase = .countdown(n)
                 try await Task.sleep(for: .seconds(1))
             }
-            await preview.stop()
+            await stopPreviews()
             let dir = try Session.makeFolder()
             let t0 = SharedClock.now()
             let cam = CameraRecorder(url: dir.appendingPathComponent("camera.mov"), fps: fps, startTime: t0)
             let scr = ScreenRecorder(url: dir.appendingPathComponent("screen.mov"), fps: fps, startTime: t0)
             camera = cam
             try cam.start(cameraName: selectedCamera?.localizedName)
-            try await scr.start(displayID: currentDisplayID(), excludingCurrentApp: true)
+            try await scr.start(target: target ?? currentDisplayID().map { .display($0) }, excludingCurrentApp: true)
             screen = scr
             sessionDir = dir
-            phase = .recording(since: Date())
+            let since = Date()
+            phase = .recording(since: since)
+            pill.show(since: since, on: recordedScreen(), stop: { [weak self] in self?.stop() })
+            mainWindow?.orderOut(nil)
         } catch is CancellationError {
             phase = .idle
-            preview.start(deviceID: cameraID)
+            startPreviews()
         } catch {
             try? await camera?.stop()
             camera = nil
             phase = .failed(message(for: error), needsSettings: false)
-            preview.start(deviceID: cameraID)
+            startPreviews()
         }
     }
 
     func stop() {
         guard case .recording = phase, let screen, let camera, let sessionDir else { return }
         phase = .processing(0)
-        let layout = Layout(corner: corner, scale: size, margin: 24 * (NSScreen.main?.backingScaleFactor ?? 2), mirror: mirror)
+        pill.hide()
+        mainWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+        // Same margin the setup preview draws: 2.5% of the recording's height.
+        let layout = Layout(corner: corner, scale: size, margin: 0.025 * screen.pixelSize.height, mirror: mirror)
         task = Task {
             do {
                 try await screen.stop()
@@ -170,7 +266,7 @@ final class RecorderModel {
     func reset() {
         phase = .idle
         thumbnail = nil
-        preview.start(deviceID: cameraID)
+        startPreviews()
     }
 
     func play() {
@@ -188,9 +284,10 @@ final class RecorderModel {
         }
     }
 
-    /// Aspect ratio of the screen being recorded, for the setup preview.
+    /// Aspect ratio of what's being recorded, for the setup preview.
     var screenAspect: CGFloat {
-        let f = (NSApp.keyWindow?.screen ?? NSScreen.main)?.frame.size ?? CGSize(width: 16, height: 10)
+        if let img = screenImage { return CGFloat(img.width) / CGFloat(max(img.height, 1)) }
+        let f = selectedSource?.size ?? (NSScreen.main?.frame.size ?? CGSize(width: 16, height: 10))
         return f.width / max(f.height, 1)
     }
 
@@ -198,8 +295,21 @@ final class RecorderModel {
 
     /// The display the DemoRec window is on, so you record the screen you're looking at.
     private func currentDisplayID() -> CGDirectDisplayID? {
-        let screen = NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.screen ?? NSScreen.main
-        return (screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+        (mainWindow?.screen ?? NSScreen.main)?.displayID
+    }
+
+    /// The screen the recording is happening on, where the stop pill should sit.
+    private func recordedScreen() -> NSScreen? {
+        guard let frame = selectedSource?.frame else { return mainWindow?.screen }
+        // SCDisplay/SCWindow frames and CGDisplayBounds share global, top-left-origin coordinates.
+        return NSScreen.screens.max { a, b in
+            func overlap(_ s: NSScreen) -> CGFloat {
+                guard let id = s.displayID else { return 0 }
+                let r = CGDisplayBounds(id).intersection(frame)
+                return r.isNull ? 0 : r.width * r.height
+            }
+            return overlap(a) < overlap(b)
+        } ?? mainWindow?.screen
     }
 
     private func message(for error: Error) -> String {
@@ -212,5 +322,22 @@ final class RecorderModel {
         gen.appliesPreferredTrackTransform = true
         gen.maximumSize = CGSize(width: 800, height: 800)
         return try? await gen.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image
+    }
+}
+
+/// One thing you can record: a screen or a window.
+struct Source: Hashable, Identifiable {
+    let target: CaptureTarget
+    let title: String
+    let subtitle: String
+    /// Global, top-left-origin coordinates.
+    let frame: CGRect
+    var size: CGSize { frame.size }
+    var id: CaptureTarget { target }
+}
+
+extension NSScreen {
+    var displayID: CGDirectDisplayID? {
+        (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
     }
 }
