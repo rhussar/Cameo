@@ -344,8 +344,8 @@ private struct TiltSlider: View {
 
 // MARK: - Preview
 
-/// A live miniature of the final video: what you're recording, with you in the corner.
-/// Click a corner to move yourself.
+/// A live miniature of the final video: what you're recording, with you in it.
+/// Drag yourself anywhere (you snap to the edges and the middle), or click a corner to snap there.
 private struct Preview: View {
     @Bindable var model: RecorderModel
     private var hovering: Bool { model.previewHovering }
@@ -370,7 +370,14 @@ private struct Preview: View {
                         .font(.system(size: 44, weight: .light)).foregroundStyle(.white.opacity(0.8))
                         .symbolEffect(.pulse)
                 default:
-                    if hovering { cornerTargets(in: geo.size) }
+                    if hovering, model.dragOrigin == nil { cornerTargets(in: geo.size) }
+                    if model.snappedToMiddle {
+                        Path { p in
+                            p.move(to: CGPoint(x: geo.size.width / 2, y: 0))
+                            p.addLine(to: CGPoint(x: geo.size.width / 2, y: geo.size.height))
+                        }
+                        .stroke(.yellow.opacity(0.8), style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
+                    }
                     presenter(in: geo.size)
                     if case .countdown(let n) = model.phase {
                         Text("\(n)")
@@ -390,6 +397,7 @@ private struct Preview: View {
                 let top = loc.y < geo.size.height / 2
                 withAnimation(.spring(duration: 0.35)) {
                     model.corner = top ? (left ? .topLeft : .topRight) : (left ? .bottomLeft : .bottomRight)
+                    model.position = nil
                 }
             }
         }
@@ -397,7 +405,7 @@ private struct Preview: View {
         .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
         .overlay(alignment: .top) {
             if model.isSetup {
-                Text("Click a corner to move yourself")
+                Text("Drag yourself anywhere · click a corner to snap there")
                     .font(.caption.weight(.medium)).foregroundStyle(.white)
                     .padding(.horizontal, 10).padding(.vertical, 5)
                     .background(.black.opacity(0.5), in: Capsule())
@@ -440,27 +448,69 @@ private struct Preview: View {
             .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
         } else if let img = model.previewImage {
             let w = h * CGFloat(img.width) / CGFloat(img.height)
+            let center = presenterCenter(w: w, h: h, margin: margin, in: size)
             Image(decorative: img, scale: 1).resizable()
                 .frame(width: w, height: h)
-                .position(position(w: w, h: h, margin: margin, in: size))
+                .contentShape(Rectangle())
+                .pointerStyle(model.isSetup ? .grabIdle : .default)
+                .onTapGesture {} // a click on you isn't a corner pick
+                .gesture(drag(w: w, h: h, center: center, in: size))
+                .position(center)
         } else {
             Image(systemName: "person.fill")
                 .font(.system(size: h * 0.6)).foregroundStyle(.white.opacity(0.25))
                 .frame(width: h, height: h)
-                .position(position(w: h, h: h, margin: margin, in: size))
+                .position(presenterCenter(w: h, h: h, margin: margin, in: size))
         }
+    }
+
+    /// Where you are in the preview: your dragged spot, or your corner.
+    private func presenterCenter(w: CGFloat, h: CGFloat, margin: CGFloat, in size: CGSize) -> CGPoint {
+        guard let p = model.position else { return position(w: w, h: h, margin: margin, in: size) }
+        // Same maths as Compositor.place, flipped to SwiftUI's top-left origin.
+        let bottom = p.y * max(size.height - h, 0)
+        return CGPoint(x: p.x * size.width, y: size.height - bottom - h / 2)
+    }
+
+    /// Moves you with the pointer, snapping flush to the sides, the middle, and the top and bottom edges.
+    private func drag(w: CGFloat, h: CGFloat, center: CGPoint, in size: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { g in
+                guard model.isSetup else { return }
+                if model.dragOrigin == nil { model.dragOrigin = center }
+                guard let start = model.dragOrigin else { return }
+                let W = size.width, H = size.height
+                let snap = 0.02 * W
+                var cx = start.x + g.translation.width
+                let cy = start.y + g.translation.height
+                var middle = false
+                if abs(cx - w / 2) < snap { cx = w / 2 }
+                else if abs(cx - (W - w / 2)) < snap { cx = W - w / 2 }
+                else if abs(cx - W / 2) < snap { cx = W / 2; middle = true }
+                cx = min(max(cx, 0), W)
+                var py = (H - cy - h / 2) / max(H - h, 1) // 0 = flush with the bottom
+                if py < 0.04 { py = 0 } else if py > 0.96 { py = 1 }
+                model.snappedToMiddle = middle
+                model.position = CGPoint(x: cx / W, y: min(max(py, 0), 1))
+            }
+            .onEnded { _ in
+                model.dragOrigin = nil
+                model.snappedToMiddle = false
+            }
     }
 
     private func cornerTargets(in size: CGSize) -> some View {
         ForEach(Corner.allCases, id: \.self) { c in
             let w = size.width * 0.16, h = size.height * 0.16
             RoundedRectangle(cornerRadius: 8)
-                .fill(.black.opacity(c == model.corner ? 0 : 0.18))
-                .strokeBorder(.white.opacity(c == model.corner ? 0 : 0.6), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                .fill(.black.opacity(isCurrent(c) ? 0 : 0.18))
+                .strokeBorder(.white.opacity(isCurrent(c) ? 0 : 0.6), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
                 .frame(width: w, height: h)
                 .position(position(corner: c, w: w, h: h, margin: size.height * RecorderModel.margin(for: c), in: size))
         }
     }
+
+    private func isCurrent(_ c: Corner) -> Bool { model.position == nil && c == model.corner }
 
     private func position(corner: Corner? = nil, w: CGFloat, h: CGFloat, margin: CGFloat, in size: CGSize) -> CGPoint {
         switch corner ?? model.corner {

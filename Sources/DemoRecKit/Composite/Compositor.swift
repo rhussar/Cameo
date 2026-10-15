@@ -201,12 +201,15 @@ public final class Compositor {
         let margin = layout.margin
         let x: CGFloat
         let y: CGFloat
-        switch layout.corner {
+        if let p = layout.position {
+            x = min(max(p.x, 0), 1) * W - w / 2
+            y = min(max(p.y, 0), 1) * max(H - h, 0)
+        } else { switch layout.corner {
         case .bottomRight: x = W - w - margin; y = margin
         case .bottomLeft: x = margin; y = margin
         case .topRight: x = W - w - margin; y = H - h - margin
         case .topLeft: x = margin; y = H - h - margin
-        }
+        } }
         person = person.transformed(by: CGAffineTransform(translationX: x, y: y))
         return person.composited(over: screen).cropped(to: screen.extent)
     }

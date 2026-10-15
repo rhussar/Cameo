@@ -69,6 +69,19 @@ final class RecorderModel {
     var corner: Corner {
         didSet { UserDefaults.standard.set(corner.rawValue, forKey: "corner") }
     }
+    /// Where you've dragged yourself (see Layout.position). nil = snapped to `corner`.
+    var position: CGPoint? {
+        didSet {
+            if let position {
+                UserDefaults.standard.set([position.x, position.y], forKey: "position")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "position")
+            }
+        }
+    }
+    /// Drag state for the preview: your centre when the drag began, and whether you're snapped to the middle.
+    var dragOrigin: CGPoint?
+    var snappedToMiddle = false
     /// Cutout height as a fraction of the screen height.
     var size: Double {
         didSet { UserDefaults.standard.set(size, forKey: "size") }
@@ -154,6 +167,7 @@ final class RecorderModel {
     init() {
         let d = UserDefaults.standard
         corner = d.string(forKey: "corner").flatMap(Corner.init(rawValue:)) ?? .bottomRight
+        position = (d.array(forKey: "position") as? [Double]).flatMap { $0.count == 2 ? CGPoint(x: $0[0], y: $0[1]) : nil }
         size = d.object(forKey: "size") as? Double ?? 0.35
         mirror = d.bool(forKey: "mirror")
         styled = d.bool(forKey: "styled")
@@ -360,6 +374,7 @@ final class RecorderModel {
         layout.stage = stage
         layout.canvas = format.size
         layout.look = look
+        layout.position = position
         task = Task {
             do {
                 try await screen.stop()

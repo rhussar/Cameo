@@ -29,6 +29,11 @@ public struct Layout: Sendable {
     public var canvas: CGSize? = nil
     /// Colour adjustments applied to you (the cutout), not the screen.
     public var look = Look()
+    /// Free placement, overriding `corner` and `margin`.
+    /// x: centre of the cutout as a fraction of the frame width, so you can sit closer to a side than a corner allows
+    /// (anything past the edge is cropped). y: 0 = flush with the bottom, 1 = flush with the top, so a flush
+    /// bottom stays flush when the size changes.
+    public var position: CGPoint? = nil
 
     public init(corner: Corner = .bottomRight, scale: Double = 0.35, margin: Double = 24, feather: Double = 2, mirror: Bool = false) {
         self.corner = corner
