@@ -82,7 +82,7 @@ public final class Transcoder {
         }
         let outputScale = CGFloat(outH) / screenSize.height
         let useHEVC = outW > 4096 || outH > 4096
-        print("output: \(outW)x\(outH) @ \(fps) fps, \(useHEVC ? "HEVC" : "H.264"), \(String(format: "%.1f", duration.seconds)) s")
+        print("output: \(outW)x\(outH) @ \(fps) fps, \(useHEVC ? "HEVC" : "H.264")")
 
         // Readers
         let pixelFormat = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
@@ -143,8 +143,17 @@ public final class Transcoder {
         // Frame generation on a fixed output clock.
         let screenSrc = FrameSource(output: screenOut)
         let cameraSrc = FrameSource(output: cameraOut)
+        // Both recorders share a start clock but deliver their first frames a moment later.
+        // Start the video once both have a frame, so it doesn't open on black.
+        let start = CMTimeMaximum(try await Self.firstFrameTime(screenTrack), try await Self.firstFrameTime(cameraTrack))
+        // Passthrough audio comes out in media time; its track's edit places it on the shared clock.
+        var audioOffset = start
+        if let audioTrack, let edit = try await audioTrack.load(.segments).first(where: { !$0.isEmpty }) {
+            audioOffset = start - (edit.timeMapping.target.start - edit.timeMapping.source.start)
+        }
         let frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
-        let totalFrames = Int((duration.seconds * Double(fps)).rounded(.up))
+        let totalFrames = max(1, Int(((duration - start).seconds * Double(fps)).rounded(.up)))
+        print(String(format: "length: %.1f s (skipping the first %.2f s before both recordings have a frame)", (duration - start).seconds, start.seconds))
         var cutout: CIImage?
         let black = CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: screenSize.width, height: screenSize.height))
         let started = Date()
@@ -155,8 +164,8 @@ public final class Transcoder {
             let i = frameIndex
             frameIndex += 1
             let t = CMTimeMultiply(frameDuration, multiplier: Int32(i))
-            _ = screenSrc.advance(to: t)
-            let cameraChanged = cameraSrc.advance(to: t)
+            _ = screenSrc.advance(to: start + t)
+            let cameraChanged = cameraSrc.advance(to: start + t)
 
             if cameraChanged, let camBuf = cameraSrc.current {
                 let mask = maskEnabled ? try masker.mask(for: camBuf) : nil
@@ -227,7 +236,8 @@ public final class Transcoder {
                         group.leave()
                         return
                     }
-                    guard audioInput.append(sb) else {
+                    guard CMSampleBufferGetNumSamples(sb) > 0, let shifted = Self.shifted(sb, by: audioOffset) else { continue }
+                    guard audioInput.append(shifted) else {
                         fail(writer.error ?? DemoRecError("failed to append audio"))
                         audioInput.markAsFinished()
                         group.leave()
@@ -250,5 +260,27 @@ public final class Transcoder {
         screenReader.cancelReading()
         cameraReader.cancelReading()
         audioReader?.cancelReading()
+    }
+
+    /// When a recording's first real frame lands: the end of the empty edit the recorder leaves before it.
+    private static func firstFrameTime(_ track: AVAssetTrack) async throws -> CMTime {
+        let segments = try await track.load(.segments)
+        return segments.first { !$0.isEmpty }?.timeMapping.target.start ?? .zero
+    }
+
+    /// Moves an audio buffer `offset` earlier. Nil if it then ends before time zero.
+    private static func shifted(_ sb: CMSampleBuffer, by offset: CMTime) -> CMSampleBuffer? {
+        guard CMSampleBufferGetPresentationTimeStamp(sb) + CMSampleBufferGetDuration(sb) - offset > .zero else { return nil }
+        var count: CMItemCount = 0
+        CMSampleBufferGetSampleTimingInfoArray(sb, entryCount: 0, arrayToFill: nil, entriesNeededOut: &count)
+        var timing = [CMSampleTimingInfo](repeating: CMSampleTimingInfo(), count: count)
+        CMSampleBufferGetSampleTimingInfoArray(sb, entryCount: count, arrayToFill: &timing, entriesNeededOut: &count)
+        for i in timing.indices {
+            timing[i].presentationTimeStamp = timing[i].presentationTimeStamp - offset
+            if timing[i].decodeTimeStamp.isValid { timing[i].decodeTimeStamp = timing[i].decodeTimeStamp - offset }
+        }
+        var out: CMSampleBuffer?
+        CMSampleBufferCreateCopyWithNewTiming(allocator: nil, sampleBuffer: sb, sampleTimingEntryCount: count, sampleTimingArray: &timing, sampleBufferOut: &out)
+        return out
     }
 }
