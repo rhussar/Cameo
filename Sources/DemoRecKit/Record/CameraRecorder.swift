@@ -1,6 +1,6 @@
 import AVFoundation
 
-/// Captures a webcam plus the default microphone and writes them to a .mov.
+/// Captures a webcam plus a microphone (the system default unless one is chosen) and writes them to a .mov.
 /// Writer inputs are created from the first buffers so any camera/mic format works.
 public final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     private let url: URL
@@ -57,8 +57,10 @@ public final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBuffe
         }
     }
 
-    public func start(cameraName: String?) throws {
-        let camera = try Self.pickCamera(matching: cameraName)
+    /// `cameraID` / `microphoneID` pick devices by unique ID; when absent or unplugged, the camera falls back
+    /// to `cameraName` matching and the microphone to the system default.
+    public func start(cameraName: String?, cameraID: String? = nil, microphoneID: String? = nil) throws {
+        let camera = try cameraID.flatMap { AVCaptureDevice(uniqueID: $0) } ?? Self.pickCamera(matching: cameraName)
         print("camera: \(camera.localizedName)")
 
         session.beginConfiguration()
@@ -67,7 +69,7 @@ public final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBuffe
         guard session.canAddInput(camInput) else { throw DemoRecError("Cannot add camera input") }
         session.addInput(camInput)
 
-        if let mic = AVCaptureDevice.default(for: .audio) {
+        if let mic = microphoneID.flatMap({ AVCaptureDevice(uniqueID: $0) }) ?? AVCaptureDevice.default(for: .audio) {
             print("microphone: \(mic.localizedName)")
             let micInput = try AVCaptureDeviceInput(device: mic)
             if session.canAddInput(micInput) { session.addInput(micInput) }

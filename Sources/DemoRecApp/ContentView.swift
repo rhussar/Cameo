@@ -72,6 +72,7 @@ private struct BottomBar: View {
         SourcePicker(model: model)
         FormatPicker(model: model)
         CameraPicker(model: model)
+        MicrophonePicker(model: model)
     }
 
     /// How it looks.
@@ -285,14 +286,29 @@ private struct CameraPicker: View {
     @Bindable var model: RecorderModel
 
     var body: some View {
-        Picker(selection: $model.cameraID) {
+        Picker(selection: $model.cameraChoice) {
             ForEach(model.cameras, id: \.uniqueID) { Text($0.localizedName).tag(Optional($0.uniqueID)) }
         } label: {
             Image(systemName: "camera")
         }
         .pickerStyle(.menu)
         .fixedSize()
-        .help("Camera")
+        .help("Camera. An iPhone nearby shows up here too (Continuity Camera).")
+    }
+}
+
+private struct MicrophonePicker: View {
+    @Bindable var model: RecorderModel
+
+    var body: some View {
+        Picker(selection: $model.microphoneChoice) {
+            ForEach(model.microphones, id: \.uniqueID) { Text($0.localizedName).tag(Optional($0.uniqueID)) }
+        } label: {
+            Image(systemName: "mic")
+        }
+        .pickerStyle(.menu)
+        .fixedSize()
+        .help("Microphone")
     }
 }
 

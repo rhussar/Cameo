@@ -24,6 +24,8 @@
 	<string>public.app-category.video</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSCameraUseContinuityCameraDeviceType</key>
+	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>DemoRec records your webcam so you can appear in the corner of your demo.</string>
 	<key>NSMicrophoneUsageDescription</key>

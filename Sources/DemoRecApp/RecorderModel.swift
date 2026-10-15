@@ -17,6 +17,7 @@ final class RecorderModel {
 
     var phase: Phase = .idle
     var cameras: [AVCaptureDevice] = []
+    var microphones: [AVCaptureDevice] = []
     var previewImage: CGImage?
     var cameraDenied = false
     var thumbnail: CGImage?
@@ -54,11 +55,16 @@ final class RecorderModel {
     var screenAccess = CGPreflightScreenCaptureAccess()
     var selectedSource: Source? { (displaySources + windowSources).first { $0.target == target } }
 
+    /// The camera and mic you picked. Kept while they're unplugged (say, the monitor's webcam when you
+    /// undock), so they're used again as soon as they come back; meanwhile a fallback stands in.
     var cameraID: String? {
         didSet {
             UserDefaults.standard.set(cameraID, forKey: "cameraID")
-            if cameraID != oldValue, isSetup { preview.start(deviceID: cameraID) }
+            restartCameraPreviewIfNeeded()
         }
+    }
+    var microphoneID: String? {
+        didSet { UserDefaults.standard.set(microphoneID, forKey: "microphoneID") }
     }
     var corner: Corner {
         didSet { UserDefaults.standard.set(corner.rawValue, forKey: "corner") }
@@ -153,6 +159,7 @@ final class RecorderModel {
         styled = d.bool(forKey: "styled")
         tilt = d.object(forKey: "tilt") as? Double ?? Stage().tilt
         cameraID = d.string(forKey: "cameraID")
+        microphoneID = d.string(forKey: "microphoneID")
         format = d.string(forKey: "format").flatMap(OutputFormat.init(rawValue:)) ?? .original
         look = d.data(forKey: "look").flatMap { try? JSONDecoder().decode(Look.self, from: $0) } ?? Look()
         preview.setMirror(mirror)
@@ -160,29 +167,61 @@ final class RecorderModel {
         updateScreenPreviewLayout()
         preview.onImage = { [weak self] in self?.previewImage = $0 }
         screenPreview.onImage = { [weak self] in self?.screenImage = $0 }
-        refreshCameras()
+        refreshDevices()
         for name in [AVCaptureDevice.wasConnectedNotification, AVCaptureDevice.wasDisconnectedNotification] {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.refreshCameras() }
+                MainActor.assumeIsolated { self?.refreshDevices() }
             }
         }
     }
 
-    var selectedCamera: AVCaptureDevice? { cameras.first { $0.uniqueID == cameraID } }
+    /// The camera in use: your pick if it's connected, else an external webcam, a phone, then the built-in one.
+    var selectedCamera: AVCaptureDevice? {
+        cameras.first { $0.uniqueID == cameraID }
+            ?? cameras.first { $0.deviceType == .external }
+            ?? cameras.first { $0.deviceType == .continuityCamera }
+            ?? cameras.first
+    }
+    /// The mic in use: your pick if it's connected, else the system default.
+    var selectedMicrophone: AVCaptureDevice? {
+        microphones.first { $0.uniqueID == microphoneID } ?? AVCaptureDevice.default(for: .audio)
+    }
+    /// What the pickers show and set.
+    var cameraChoice: String? {
+        get { selectedCamera?.uniqueID }
+        set { cameraID = newValue }
+    }
+    var microphoneChoice: String? {
+        get { selectedMicrophone?.uniqueID }
+        set { microphoneID = newValue }
+    }
 
-    func refreshCameras() {
+    func refreshDevices() {
         cameras = CameraRecorder.cameras()
-        if selectedCamera == nil {
-            // Prefer an external webcam over the built-in one.
-            cameraID = (cameras.first { $0.deviceType == .external } ?? cameras.first)?.uniqueID
-        }
+        microphones = CameraRecorder.microphones()
+        restartCameraPreviewIfNeeded()
+    }
+
+    private var previewStarted = false
+    private var previewCameraID: String?
+
+    /// Switches the live preview when the camera in use changes (a pick, or a device coming or going).
+    private func restartCameraPreviewIfNeeded() {
+        guard previewStarted, isSetup, !cameraDenied, selectedCamera?.uniqueID != previewCameraID else { return }
+        startCameraPreview()
+    }
+
+    private func startCameraPreview() {
+        previewStarted = true
+        previewCameraID = selectedCamera?.uniqueID
+        preview.start(deviceID: previewCameraID)
     }
 
     func appeared() {
         Task {
             if await AVCaptureDevice.requestAccess(for: .video) {
                 cameraDenied = false
-                preview.start(deviceID: cameraID)
+                startCameraPreview()
             } else {
                 cameraDenied = true
             }
@@ -251,7 +290,7 @@ final class RecorderModel {
     }
 
     private func startPreviews() {
-        preview.start(deviceID: cameraID)
+        startCameraPreview()
         startScreenPreview()
     }
 
@@ -289,7 +328,8 @@ final class RecorderModel {
             let cam = CameraRecorder(url: dir.appendingPathComponent("camera.mov"), fps: fps, startTime: t0)
             let scr = ScreenRecorder(url: dir.appendingPathComponent("screen.mov"), fps: fps, startTime: t0)
             camera = cam
-            try cam.start(cameraName: selectedCamera?.localizedName)
+            try cam.start(cameraName: selectedCamera?.localizedName, cameraID: selectedCamera?.uniqueID,
+                          microphoneID: selectedMicrophone?.uniqueID)
             try await scr.start(target: target ?? currentDisplayID().map { .display($0) }, excludingCurrentApp: true)
             screen = scr
             sessionDir = dir
