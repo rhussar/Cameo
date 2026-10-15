@@ -1,5 +1,6 @@
 import ArgumentParser
 import AVFoundation
+import DemoRecKit
 import Foundation
 import ScreenCaptureKit
 
@@ -41,11 +42,7 @@ struct Record: AsyncParsableCommand {
     @Option(help: "Folder that session folders are created in.") var out: String = "~/Movies/DemoRec"
 
     func run() async throws {
-        let base = URL(fileURLWithPath: NSString(string: out).expandingTildeInPath)
-        let fmt = DateFormatter()
-        fmt.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let dir = base.appendingPathComponent(fmt.string(from: Date()))
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dir = try Session.makeFolder(in: URL(fileURLWithPath: NSString(string: out).expandingTildeInPath))
 
         do {
             try await CameraRecorder.requestAccess()
@@ -112,3 +109,6 @@ func waitForInterrupt() async {
         interruptSource = src
     }
 }
+
+extension Corner: ExpressibleByArgument {}
+extension MaskQuality: ExpressibleByArgument {}

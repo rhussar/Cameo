@@ -4,7 +4,9 @@ import Metal
 
 /// Reads screen.mov and camera.mov, renders the composite on a fixed output clock, and writes final.mp4
 /// with the camera file's audio passed through untouched.
-final class Transcoder {
+public final class Transcoder {
+    /// Called from a background queue with the fraction of frames rendered (0...1).
+    public var onProgress: ((Double) -> Void)?
     private let layout: Layout
     private let fps: Int
     private let outputHeight: Int?
@@ -13,7 +15,7 @@ final class Transcoder {
     private let compositor: Compositor
     private let ciContext: CIContext
 
-    init(layout: Layout, fps: Int, outputHeight: Int?, quality: MaskQuality, maskEnabled: Bool = true) {
+    public init(layout: Layout, fps: Int, outputHeight: Int?, quality: MaskQuality, maskEnabled: Bool = true) {
         self.layout = layout
         self.maskEnabled = maskEnabled
         self.fps = fps
@@ -60,7 +62,7 @@ final class Transcoder {
         }
     }
 
-    func run(screenURL: URL, cameraURL: URL, outputURL: URL) async throws {
+    public func run(screenURL: URL, cameraURL: URL, outputURL: URL) async throws {
         let screenAsset = AVURLAsset(url: screenURL)
         let cameraAsset = AVURLAsset(url: cameraURL)
         guard let screenTrack = try await screenAsset.loadTracks(withMediaType: .video).first else { throw DemoRecError("screen.mov has no video track") }
@@ -173,6 +175,7 @@ final class Transcoder {
             guard let outBuf else { throw DemoRecError("could not allocate output buffer") }
             ciContext.render(frame, to: outBuf, bounds: CGRect(x: 0, y: 0, width: outW, height: outH), colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
 
+            if i % fps == 0 || i == totalFrames - 1 { onProgress?(Double(i + 1) / Double(totalFrames)) }
             if i % (fps * 5) == 0 || i == totalFrames - 1 {
                 let elapsed = Date().timeIntervalSince(started)
                 let pct = Double(i + 1) / Double(totalFrames) * 100

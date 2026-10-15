@@ -5,7 +5,19 @@ screen recording with a background-removed cutout of you floating in a corner, a
 voice as the audio track. Everything runs locally on Apple frameworks (ScreenCaptureKit,
 AVFoundation, Vision, CoreImage). No models to download, no cloud.
 
-## Build
+## App (easiest)
+
+```bash
+scripts/build-app.sh
+```
+
+This installs `~/Applications/DemoRec.app`. Open it, click a corner of the preview to choose
+where you appear, drag the slider to set your size, and hit **Start Recording**. After a
+3-second countdown the window shrinks to a small floating pill (hidden from the recording).
+Click **Stop** and the app makes `final.mp4`, then offers **Play** and **Show in Finder**.
+Recordings go to `~/Movies/DemoRec/<timestamp>/`.
+
+## Build (CLI)
 
 ```bash
 swift build -c release
@@ -68,8 +80,9 @@ preview. Good lighting and a plain background behind you make the mask noticeabl
 ## Layout
 
 ```
-Sources/demorec/
-  DemoRec.swift                 CLI (devices / record / composite)
+Sources/DemoRecApp/            SwiftUI app (setup preview, recording pill, progress)
+Sources/demorec/DemoRec.swift   CLI (devices / record / composite)
+Sources/DemoRecKit/             shared recording + compositing code
   Config.swift                  Layout, Corner, MaskQuality
   Record/Clock.swift            shared T0
   Record/ScreenRecorder.swift   ScreenCaptureKit -> screen.mov

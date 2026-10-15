@@ -2,7 +2,7 @@ import AVFoundation
 
 /// Captures a webcam plus the default microphone and writes them to a .mov.
 /// Writer inputs are created from the first buffers so any camera/mic format works.
-final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
+public final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     private let url: URL
     private let fps: Int
     private let startTime: CMTime
@@ -16,29 +16,29 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
     private var videoInput: AVAssetWriterInput?
     private var audioInput: AVAssetWriterInput?
     private var writing = false
-    private(set) var frameCount = 0
+    public private(set) var frameCount = 0
 
-    init(url: URL, fps: Int, startTime: CMTime) {
+    public init(url: URL, fps: Int, startTime: CMTime) {
         self.url = url
         self.fps = fps
         self.startTime = startTime
     }
 
-    static func cameras() -> [AVCaptureDevice] {
+    public static func cameras() -> [AVCaptureDevice] {
         AVCaptureDevice.DiscoverySession(
             deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera],
             mediaType: .video, position: .unspecified
         ).devices
     }
 
-    static func microphones() -> [AVCaptureDevice] {
+    public static func microphones() -> [AVCaptureDevice] {
         AVCaptureDevice.DiscoverySession(
             deviceTypes: [.microphone, .external],
             mediaType: .audio, position: .unspecified
         ).devices
     }
 
-    static func pickCamera(matching name: String?) throws -> AVCaptureDevice {
+    public static func pickCamera(matching name: String?) throws -> AVCaptureDevice {
         let all = cameras()
         if let name, let match = all.first(where: { $0.localizedName.localizedCaseInsensitiveContains(name) }) {
             return match
@@ -50,14 +50,14 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         return fallback
     }
 
-    static func requestAccess() async throws {
+    public static func requestAccess() async throws {
         for media in [AVMediaType.video, .audio] {
             let ok = await AVCaptureDevice.requestAccess(for: media)
-            guard ok else { throw DemoRecError("\(media == .video ? "Camera" : "Microphone") access denied for this terminal app. Allow it in System Settings > Privacy & Security, then rerun.") }
+            guard ok else { throw DemoRecError("\(media == .video ? "Camera" : "Microphone") access denied. Allow it in System Settings > Privacy & Security, then try again.") }
         }
     }
 
-    func start(cameraName: String?) throws {
+    public func start(cameraName: String?) throws {
         let camera = try Self.pickCamera(matching: cameraName)
         print("camera: \(camera.localizedName)")
 
@@ -144,7 +144,7 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         }
     }
 
-    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+    public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         let isVideo = output === videoOutput
         ensureInputs(video: isVideo ? sampleBuffer : nil, audio: isVideo ? nil : sampleBuffer)
         guard writing, CMSampleBufferGetPresentationTimeStamp(sampleBuffer) >= startTime else { return }
@@ -155,7 +155,7 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
         }
     }
 
-    func stop() async throws {
+    public func stop() async throws {
         session.stopRunning()
         // Drain anything still queued on the delegate queue.
         await withCheckedContinuation { cont in queue.async { cont.resume() } }

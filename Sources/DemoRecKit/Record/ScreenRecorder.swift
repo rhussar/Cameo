@@ -3,7 +3,7 @@ import ScreenCaptureKit
 
 /// Captures one display with ScreenCaptureKit and writes it to a .mov.
 /// Frames carry host-clock timestamps; the writer session starts at the shared T0.
-final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
+public final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private let url: URL
     private let fps: Int
     private let startTime: CMTime
@@ -12,26 +12,33 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     private var stream: SCStream?
     private var writer: AVAssetWriter?
     private var input: AVAssetWriterInput?
-    private(set) var frameCount = 0
-    private(set) var pixelSize = CGSize.zero
+    public private(set) var frameCount = 0
+    public private(set) var pixelSize = CGSize.zero
 
-    init(url: URL, fps: Int, startTime: CMTime) {
+    public init(url: URL, fps: Int, startTime: CMTime) {
         self.url = url
         self.fps = fps
         self.startTime = startTime
     }
 
-    static func displays() async throws -> [SCDisplay] {
+    public static func displays() async throws -> [SCDisplay] {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         return content.displays
     }
 
-    func start(displayID: CGDirectDisplayID?) async throws {
-        let displays = try await Self.displays()
+    /// `excludingCurrentApp` keeps the calling app's own windows (e.g. the recording controls) out of the video.
+    public func start(displayID: CGDirectDisplayID?, excludingCurrentApp: Bool = false) async throws {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        let displays = content.displays
         guard let display = displays.first(where: { displayID == nil || $0.displayID == displayID }) ?? displays.first else {
             throw DemoRecError("No display found")
         }
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let filter: SCContentFilter
+        if excludingCurrentApp, let me = content.applications.first(where: { $0.processID == getpid() }) {
+            filter = SCContentFilter(display: display, excludingApplications: [me], exceptingWindows: [])
+        } else {
+            filter = SCContentFilter(display: display, excludingWindows: [])
+        }
         let scale = filter.pointPixelScale
         let width = Int(CGFloat(display.width) * CGFloat(scale))
         let height = Int(CGFloat(display.height) * CGFloat(scale))
@@ -70,7 +77,7 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         self.stream = stream
     }
 
-    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+    public func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen, sampleBuffer.isValid, let input else { return }
         guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
               let statusRaw = attachments.first?[.status] as? Int,
@@ -82,11 +89,11 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
-    func stream(_ stream: SCStream, didStopWithError error: Error) {
+    public func stream(_ stream: SCStream, didStopWithError error: Error) {
         fputs("screen stream stopped: \(error.localizedDescription)\n", stderr)
     }
 
-    func stop() async throws {
+    public func stop() async throws {
         try? await stream?.stopCapture()
         stream = nil
         guard let writer, let input else { return }
@@ -96,7 +103,7 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 }
 
-struct DemoRecError: Error, CustomStringConvertible {
-    let description: String
-    init(_ description: String) { self.description = description }
+public struct DemoRecError: Error, CustomStringConvertible {
+    public let description: String
+    public init(_ description: String) { self.description = description }
 }

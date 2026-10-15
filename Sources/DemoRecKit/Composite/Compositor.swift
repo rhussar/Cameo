@@ -3,14 +3,14 @@ import CoreImage.CIFilterBuiltins
 
 /// Cuts the presenter out of the camera frame and places the cutout over the screen frame.
 /// Pure CoreImage; takes CIImages and returns a CIImage so it works for files now and live frames later.
-final class Compositor {
+public final class Compositor {
     private let layout: Layout
 
-    init(layout: Layout) {
+    public init(layout: Layout) {
         self.layout = layout
     }
 
-    func cutout(camera: CIImage, mask: CIImage?) -> CIImage {
+    public func cutout(camera: CIImage, mask: CIImage?) -> CIImage {
         var cam = camera
         if layout.mirror {
             cam = cam.transformed(by: CGAffineTransform(scaleX: -1, y: 1).translatedBy(x: -cam.extent.width, y: 0))
@@ -35,7 +35,7 @@ final class Compositor {
     }
 
     /// Scales and positions the cutout in the configured corner and composites it over the screen frame.
-    func compose(screen: CIImage, cutout: CIImage) -> CIImage {
+    public func compose(screen: CIImage, cutout: CIImage) -> CIImage {
         let targetHeight = layout.scale * screen.extent.height
         let s = targetHeight / cutout.extent.height
         var person = cutout.transformed(by: CGAffineTransform(scaleX: s, y: s))
