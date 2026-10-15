@@ -23,5 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate()
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    // Hiding the main window while recording also triggers this check; stay alive while the stop pill is up.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        !sender.windows.contains { $0.isVisible }
+    }
 }
