@@ -13,8 +13,11 @@ public struct CursorTrack: Codable, Sendable {
     }
     public var samples: [Point] = []
     public var clicks: [Point] = []
-    /// Spots you marked with the zoom hotkey.
+    /// Where you pressed the zoom shortcut to zoom in.
     public var marks: [Point] = []
+    /// When you pressed the zoom shortcut again to zoom back out. nil in recordings from before the shortcut
+    /// toggled; their marks zoom out on their own after a few seconds.
+    public var zoomOuts: [Double]?
 
     public init() {}
 
@@ -39,6 +42,7 @@ public struct CursorTrack: Codable, Sendable {
         out.samples = samples.map(map)
         out.clicks = clicks.map(map).filter(inside)
         out.marks = marks.map(map).filter(inside)
+        out.zoomOuts = zoomOuts
         return out
     }
 }
@@ -54,13 +58,17 @@ public final class CursorRecorder: @unchecked Sendable {
     private var area = CGRect.zero
     private var tick = 0
     private var buttonsDown = false
+    private var zoomedIn = false // queue only
     private let lock = NSLock()
     private let keepsTrack: Bool
 
     public enum Event: Sendable {
         case move(CursorTrack.Point)
         case click(CursorTrack.Point)
-        case mark(CursorTrack.Point)
+        /// The zoom shortcut: zoom in on this point.
+        case zoomIn(CursorTrack.Point)
+        /// The zoom shortcut again: zoom back out, at this time.
+        case zoomOut(Double)
     }
     /// Called on the recorder's own queue as things happen. Set it before `start()`.
     public var onEvent: ((Event) -> Void)?
@@ -71,6 +79,7 @@ public final class CursorRecorder: @unchecked Sendable {
         self.startTime = startTime
         self.target = target
         self.keepsTrack = keepsTrack
+        track.zoomOuts = []
     }
 
     public func start() {
@@ -83,12 +92,23 @@ public final class CursorRecorder: @unchecked Sendable {
     }
 
     /// Asks for a zoom on wherever the pointer is right now.
-    public func mark() {
+    /// The zoom shortcut: zooms in on the pointer, or back out if already zoomed in.
+    /// `done` gets whether it's now zoomed in, on the main queue.
+    public func toggleZoom(done: (@Sendable (Bool) -> Void)? = nil) {
         queue.async { [self] in
-            // The pointer is on another screen: nothing here to zoom in on.
-            guard let p = point(), (0...1).contains(p.x), (0...1).contains(p.y) else { return }
-            if keepsTrack { lock.lock(); track.marks.append(p); lock.unlock() }
-            onEvent?(.mark(p))
+            if zoomedIn {
+                let t = (SharedClock.now() - startTime).seconds
+                if keepsTrack { lock.lock(); track.zoomOuts?.append(t); lock.unlock() }
+                zoomedIn = false
+                onEvent?(.zoomOut(t))
+            } else if let p = point(), (0...1).contains(p.x), (0...1).contains(p.y) {
+                // (Off on another screen there's nothing here to zoom in on.)
+                if keepsTrack { lock.lock(); track.marks.append(p); lock.unlock() }
+                zoomedIn = true
+                onEvent?(.zoomIn(p))
+            }
+            let now = zoomedIn
+            DispatchQueue.main.async { done?(now) }
         }
     }
 

@@ -9,7 +9,7 @@ public struct ZoomState: Sendable, Equatable {
     public static let none = ZoomState(scale: 1, x: 0.5, y: 0.5)
 }
 
-/// How eagerly and how hard the screen zooms on its own. ⌃⌥Z marks zoom at every strength, even Off.
+/// How eagerly and how hard the screen zooms on its own. The zoom shortcut works at every strength, even Off.
 public enum ZoomStrength: String, CaseIterable, Sendable {
     case off, subtle, normal, strong
 
@@ -17,7 +17,7 @@ public enum ZoomStrength: String, CaseIterable, Sendable {
 
     public var note: String {
         switch self {
-        case .off: "Only where you press ⌃⌥Z"
+        case .off: "Only when you press the zoom shortcut"
         case .subtle: "A gentle zoom on clicks"
         case .normal: "Clicks, and where you stop to point at something"
         case .strong: "Close and quick, on every click and pause"
@@ -48,8 +48,11 @@ public struct ZoomSettings: Sendable {
     public init(strength: ZoomStrength = .subtle, level: Double? = nil) {
         self.strength = strength
         switch strength {
-        case .off, .subtle:
-            // Off still has to look good for ⌃⌥Z marks.
+        case .off:
+            // Zooms you ask for with the shortcut: close enough to read, smooth, and following the pointer.
+            self.level = 1.6; zoomSpeed = 4.5; panSpeed = 5; followSlack = 0.6
+            usesRests = false; restMinDuration = 1.5; restMinTravel = 0.15; mergeGap = 3; cooldown = 6
+        case .subtle:
             self.level = 1.4; zoomSpeed = 4.5; panSpeed = 4.5; followSlack = 0.8
             usesRests = false; restMinDuration = 1.5; restMinTravel = 0.15; mergeGap = 3; cooldown = 6
         case .normal:
@@ -62,7 +65,7 @@ public struct ZoomSettings: Sendable {
         if let level { self.level = max(level, 1) }
     }
 
-    /// Zooms on its own at all, rather than only on ⌃⌥Z marks.
+    /// Zooms on its own at all, rather than only when you press the zoom shortcut.
     public var auto: Bool { strength != .off }
 }
 
@@ -75,8 +78,10 @@ public enum ZoomPlanner {
         var start: Double
         var end: Double
         var focus: CursorTrack.Point
-        /// Contains a ⌃⌥Z mark, which always zooms.
+        /// Contains a zoom you asked for with the shortcut, which always zooms.
         var marked = false
+        /// Ends where you pressed the shortcut to zoom out, so it isn't stretched to meet the next zoom.
+        var explicitEnd = false
     }
 
     // Timings, in seconds. The lead lets the camera arrive just as the moment happens.
@@ -87,7 +92,14 @@ public enum ZoomPlanner {
     static let restRadius = 0.012
 
     static func segments(for track: CursorTrack, settings: ZoomSettings) -> [Segment] {
-        var windows: [Segment] = track.marks.map { Segment(start: $0.t - markLead, end: $0.t + markHold, focus: $0, marked: true) }
+        var windows: [Segment] = track.marks.map { mark in
+            guard let outs = track.zoomOuts else {
+                return Segment(start: mark.t - markLead, end: mark.t + markHold, focus: mark, marked: true)
+            }
+            // Zoomed in until you pressed the shortcut again, or to the end if you didn't.
+            let end = outs.first { $0 > mark.t } ?? .infinity
+            return Segment(start: mark.t - markLead, end: end, focus: mark, marked: true, explicitEnd: true)
+        }
         if settings.auto {
             windows += track.clicks.map { Segment(start: $0.t - clickLead, end: $0.t + clickHold, focus: $0) }
             if settings.usesRests {
@@ -99,9 +111,10 @@ public enum ZoomPlanner {
         windows.sort { $0.start < $1.start }
         var merged: [Segment] = []
         for w in windows {
-            if let last = merged.last, w.start - last.end < settings.mergeGap {
+            if let last = merged.last, w.start - last.end < settings.mergeGap, !last.explicitEnd {
                 merged[merged.count - 1].end = max(last.end, w.end)
                 merged[merged.count - 1].marked = last.marked || w.marked
+                merged[merged.count - 1].explicitEnd = w.end >= last.end ? w.explicitEnd : last.explicitEnd
             } else if let last = merged.last, w.start - last.end < settings.cooldown, !w.marked {
                 continue // just zoomed out: let the full view breathe before zooming in again
             } else {
@@ -311,9 +324,16 @@ public final class LiveZoom: @unchecked Sendable {
         if settings.auto { autoZoom(on: p, until: p.t + ZoomPlanner.clickHold) }
     }
 
-    public func marked(_ p: CursorTrack.Point) {
+    /// The zoom shortcut: stays zoomed in until `zoomedOut`.
+    public func zoomedIn(_ p: CursorTrack.Point) {
         lock.lock(); defer { lock.unlock() }
-        zoom(on: p, until: p.t + ZoomPlanner.markHold)
+        focus = p
+        zoomedUntil = .infinity
+    }
+
+    public func zoomedOut(at t: Double) {
+        lock.lock(); defer { lock.unlock() }
+        zoomedUntil = t
     }
 
     /// True while the view is zoomed or moving, so the preview knows to keep redrawing.

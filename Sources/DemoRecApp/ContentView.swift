@@ -97,7 +97,7 @@ private struct BottomBar: View {
         if model.styled {
             TiltSlider(tilt: $model.tilt, width: wide ? 130 : 90)
         }
-        ZoomPicker(model: model)
+        ZoomKeyButton(model: model)
     }
 
     @ViewBuilder private var primary: some View {
@@ -165,30 +165,29 @@ private struct RecordingsMenu: View {
     }
 }
 
-/// How much the screen zooms on its own. ⌃⌥Z zooms at every setting.
-private struct ZoomPicker: View {
+/// The zoom shortcut: shows it, and click to set a new one.
+private struct ZoomKeyButton: View {
     @Bindable var model: RecorderModel
 
     var body: some View {
-        Menu {
-            ForEach(ZoomStrength.allCases, id: \.self) { s in
-                Button {
-                    model.zoomStrength = s
-                } label: {
-                    Image(systemName: s == model.zoomStrength ? "checkmark" : "")
-                    Text(s.name)
-                    Text(s.note)
-                }
+        Button(action: model.toggleCapturingShortcut) {
+            if model.capturingShortcut {
+                Label(model.shortcutHint ?? "Press a shortcut…", systemImage: "keyboard")
+            } else {
+                Label("Zoom  \(model.zoomShortcut.label)", systemImage: model.zoomShortcutTaken ? "exclamationmark.triangle" : "plus.magnifyingglass")
             }
-            Divider()
-            Text("Press \(HotKey.zoomLabel) to zoom in on the pointer, at any setting")
-        } label: {
-            Label(model.zoomStrength == .off ? "Zoom off" : "Zoom: \(model.zoomStrength.name)",
-                  systemImage: model.zoomStrength == .off ? "minus.magnifyingglass" : "plus.magnifyingglass")
         }
-        .menuStyle(.button)
+        .tint(model.capturingShortcut ? .accentColor : nil)
+        .buttonStyle(.bordered)
         .fixedSize()
-        .help("Auto-zoom: how much the screen zooms in where you click or pause. Try it on the preview.")
+        .help(help)
+    }
+
+    private var help: String {
+        if model.capturingShortcut { return "Press the shortcut you want for zooming. Esc cancels." }
+        if model.zoomShortcutTaken { return "Another app already uses \(model.zoomShortcut.label). Click to choose a different shortcut." }
+        return "Press \(model.zoomShortcut.label) to zoom in on the pointer and follow it; press it again to zoom out. "
+            + "Try it on the preview. Click to change the shortcut."
     }
 }
 

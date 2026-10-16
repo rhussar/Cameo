@@ -12,6 +12,7 @@ final class PillPanel {
     func show(since: Date, on screen: NSScreen?, zoomHint: String?, discard: @escaping () -> Void, stop: @escaping () -> Void) {
         hide()
         zoomMarks.count = 0
+        zoomMarks.zoomedIn = false
         let host = NSHostingView(rootView: RecordingPill(since: since, zoomHint: zoomHint, marks: zoomMarks, discard: discard, stop: stop))
         let size = host.fittingSize
         let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size),
@@ -36,15 +37,17 @@ final class PillPanel {
         panel = nil
     }
 
-    /// Acknowledges the zoom shortcut with a bounce, so you know the spot was marked.
-    func flashZoom() {
+    /// Acknowledges the zoom shortcut with a bounce, and shows whether you're zoomed in now.
+    func setZoomed(_ zoomedIn: Bool) {
         zoomMarks.count += 1
+        zoomMarks.zoomedIn = zoomedIn
     }
 }
 
 @MainActor @Observable
 private final class ZoomMarks {
     var count = 0
+    var zoomedIn = false
 }
 
 private struct RecordingPill: View {
@@ -64,12 +67,12 @@ private struct RecordingPill: View {
             }
             if let zoomHint {
                 HStack(spacing: 4) {
-                    Image(systemName: "plus.magnifyingglass")
+                    Image(systemName: marks.zoomedIn ? "minus.magnifyingglass" : "plus.magnifyingglass")
                         .symbolEffect(.bounce, value: marks.count)
-                        .foregroundStyle(marks.count > 0 ? Color.accentColor : .secondary)
+                        .foregroundStyle(marks.zoomedIn ? Color.accentColor : .secondary)
                     Text(zoomHint).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
                 }
-                .help("Press \(zoomHint) to zoom in on the pointer here")
+                .help(marks.zoomedIn ? "Zoomed in. Press \(zoomHint) to zoom back out" : "Press \(zoomHint) to zoom in on the pointer")
             }
             Button(action: discard) {
                 Image(systemName: "trash")

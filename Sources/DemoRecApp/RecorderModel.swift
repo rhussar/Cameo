@@ -109,13 +109,20 @@ final class RecorderModel {
             updateScreenPreviewLayout()
         }
     }
-    /// How much the screen zooms on its own on clicks and pauses. The zoom hotkey works at every strength.
-    var zoomStrength: ZoomStrength {
+    /// Press to zoom in on the pointer and follow it, press again to zoom out. Works anywhere while DemoRec is open.
+    var zoomShortcut: Shortcut {
         didSet {
-            UserDefaults.standard.set(zoomStrength.rawValue, forKey: "zoomStrength")
-            screenPreview.liveZoom.setSettings(ZoomSettings(strength: zoomStrength))
+            if let data = try? JSONEncoder().encode(zoomShortcut) { UserDefaults.standard.set(data, forKey: "zoomShortcut") }
+            registerZoomHotKey()
         }
     }
+    /// Another app already uses the zoom shortcut, so it does nothing here.
+    var zoomShortcutTaken = false
+    /// Waiting for you to press a new zoom shortcut.
+    var capturingShortcut = false
+    /// Why the last key pressed while capturing wasn't taken.
+    var shortcutHint: String?
+    private var shortcutMonitor: Any?
     /// Card tilt in degrees when styled; positive brings the left edge closer.
     var tilt: Double {
         didSet {
@@ -257,9 +264,7 @@ final class RecorderModel {
         mirror = d.bool(forKey: "mirror")
         styled = d.bool(forKey: "styled")
         tilt = d.object(forKey: "tilt") as? Double ?? Stage().tilt
-        // Before there were strengths, auto-zoom was on or off.
-        zoomStrength = d.string(forKey: "zoomStrength").flatMap(ZoomStrength.init(rawValue:))
-            ?? (d.object(forKey: "autoZoom") as? Bool == false ? .off : .subtle)
+        zoomShortcut = d.data(forKey: "zoomShortcut").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .defaultZoom
         cameraID = d.string(forKey: "cameraID")
         microphoneID = d.string(forKey: "microphoneID")
         format = d.string(forKey: "format").flatMap(OutputFormat.init(rawValue:)) ?? .original
@@ -270,7 +275,7 @@ final class RecorderModel {
         preview.setMirror(mirror)
         preview.setLook(look)
         updateScreenPreviewLayout()
-        screenPreview.liveZoom.setSettings(ZoomSettings(strength: zoomStrength))
+        screenPreview.liveZoom.setSettings(Self.zoomSettings)
         preview.onImage = { [weak self] in self?.previewImage = $0 }
         screenPreview.onImage = { [weak self] in self?.screenImage = $0 }
         refreshDevices()
@@ -324,18 +329,7 @@ final class RecorderModel {
     }
 
     func appeared() {
-        // One shortcut for the app's lifetime: during setup it zooms the preview, while recording it marks the video.
-        if zoomHotKey == nil {
-            zoomHotKey = HotKey.zoom { [weak self] in
-                guard let self else { return }
-                if case .recording = phase {
-                    cursor?.mark()
-                    pill.flashZoom()
-                } else if isSetup, !cropping {
-                    previewCursor?.mark()
-                }
-            }
-        }
+        if zoomHotKey == nil, !capturingShortcut { registerZoomHotKey() }
         Task {
             if await AVCaptureDevice.requestAccess(for: .video) {
                 cameraDenied = false
@@ -420,12 +414,10 @@ final class RecorderModel {
         previewCursor = watcher
     }
 
-    /// Passes the pointer to the preview's zoom, in the crop's coordinates. Ignores it over DemoRec's own
-    /// windows: they aren't in the recording, and clicking DemoRec's buttons shouldn't zoom the preview.
+    /// Passes the pointer to the preview's zoom, in the crop's coordinates. Ignores moves and clicks over DemoRec's
+    /// own windows: they aren't in the recording, and clicking DemoRec's buttons shouldn't zoom the preview.
     private func previewPointer(_ event: CursorRecorder.Event) {
         guard isSetup, !cropping else { return }
-        let mouse = NSEvent.mouseLocation
-        guard !NSApp.windows.contains(where: { $0.isVisible && $0.frame.contains(mouse) }) else { return }
         let zoom = screenPreview.liveZoom
         let c = crop ?? CGRect(x: 0, y: 0, width: 1, height: 1)
         func map(_ p: CursorTrack.Point) -> CursorTrack.Point {
@@ -433,9 +425,70 @@ final class RecorderModel {
         }
         func inside(_ p: CursorTrack.Point) -> Bool { (0...1).contains(p.x) && (0...1).contains(p.y) }
         switch event {
-        case .move(let p): zoom.moved(map(p))
-        case .click(let p): if inside(map(p)) { zoom.clicked(map(p)) }
-        case .mark(let p): if inside(map(p)) { zoom.marked(map(p)) }
+        // The shortcut counts wherever the pointer is: it's what the recording would do.
+        case .zoomIn(let p): if inside(map(p)) { zoom.zoomedIn(map(p)) }
+        case .zoomOut(let t): zoom.zoomedOut(at: t)
+        case .move(let p): if !overDemoRec() { zoom.moved(map(p)) }
+        case .click(let p): if !overDemoRec(), inside(map(p)) { zoom.clicked(map(p)) }
+        }
+    }
+
+    private func overDemoRec() -> Bool {
+        let mouse = NSEvent.mouseLocation
+        return NSApp.windows.contains { $0.isVisible && $0.frame.contains(mouse) }
+    }
+
+    // MARK: Zoom shortcut
+
+    /// Zooms are only the ones you ask for with the shortcut, moving gently and following the pointer.
+    static let zoomSettings = ZoomSettings(strength: .off)
+
+    /// One shortcut for the app's lifetime: during setup it zooms the preview, while recording it zooms the video.
+    private func registerZoomHotKey() {
+        zoomHotKey?.unregister()
+        zoomHotKey = HotKey(zoomShortcut) { [weak self] in
+            guard let self else { return }
+            if case .recording = phase {
+                cursor?.toggleZoom { [weak self] zoomedIn in
+                    MainActor.assumeIsolated { self?.pill.setZoomed(zoomedIn) }
+                }
+            } else if isSetup, !cropping {
+                previewCursor?.toggleZoom()
+            }
+        }
+        zoomShortcutTaken = zoomHotKey == nil
+    }
+
+    /// Click the shortcut button, then press the new shortcut. Esc or a second click cancels.
+    func toggleCapturingShortcut() {
+        if capturingShortcut { finishCapturing(nil); return }
+        capturingShortcut = true
+        shortcutHint = nil
+        // Off while capturing, or pressing the current shortcut would zoom instead of being captured.
+        zoomHotKey?.unregister()
+        zoomHotKey = nil
+        shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            if event.keyCode == 53 { // Esc
+                finishCapturing(nil)
+            } else if let s = Shortcut(event: event) {
+                finishCapturing(s)
+            } else {
+                shortcutHint = "Hold ⌘, ⌃ or ⌥ too, or use an F-key"
+            }
+            return nil
+        }
+    }
+
+    private func finishCapturing(_ shortcut: Shortcut?) {
+        if let shortcutMonitor { NSEvent.removeMonitor(shortcutMonitor) }
+        shortcutMonitor = nil
+        capturingShortcut = false
+        shortcutHint = nil
+        if let shortcut {
+            zoomShortcut = shortcut // registers it
+        } else {
+            registerZoomHotKey()
         }
     }
 
@@ -455,6 +508,7 @@ final class RecorderModel {
 
     func record() {
         cropping = false
+        if capturingShortcut { finishCapturing(nil) }
         task = Task { await startRecording() }
     }
 
@@ -492,7 +546,7 @@ final class RecorderModel {
             cursor = cur
             let since = Date()
             phase = .recording(since: since)
-            pill.show(since: since, on: recordedScreen(), zoomHint: zoomHotKey == nil ? nil : HotKey.zoomLabel,
+            pill.show(since: since, on: recordedScreen(), zoomHint: zoomHotKey == nil ? nil : zoomShortcut.label,
                       discard: { [weak self] in self?.discard() }, stop: { [weak self] in self?.stop() })
             mainWindow?.orderOut(nil)
         } catch is CancellationError {
@@ -512,7 +566,7 @@ final class RecorderModel {
         pill.hide()
         let track = cursor?.stop()
         cursor = nil
-        let zoom = ZoomSettings(strength: zoomStrength)
+        let zoom = Self.zoomSettings
         mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate()
         var layout = Layout(corner: corner, scale: size, mirror: mirror)
