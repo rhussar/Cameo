@@ -456,7 +456,32 @@ final class RecorderModel {
                 previewCursor?.toggleZoom()
             }
         }
-        zoomShortcutTaken = zoomHotKey == nil
+        zoomShortcutTaken = zoomHotKey == nil && zoomShortcut.mouseButton == nil
+        zoomShortcutNeedsAccess = zoomHotKey == nil && zoomShortcut.mouseButton != nil
+        if zoomShortcutNeedsAccess, accessObserver == nil {
+            // You grant access in System Settings; try again each time you come back to DemoRec.
+            accessObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                                                    object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.zoomShortcutNeedsAccess, !self.capturingShortcut else { return }
+                    self.registerZoomHotKey()
+                }
+            }
+        }
+    }
+
+    private var accessObserver: NSObjectProtocol?
+
+    /// A mouse-button shortcut is set but DemoRec doesn't have Accessibility access yet.
+    var zoomShortcutNeedsAccess = false
+
+    /// Asks macOS for Accessibility access (opening the prompt or Settings), then tries the mouse button again.
+    func requestMouseAccess() {
+        if !HotKey.mouseAccess(prompt: true),
+           let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+        registerZoomHotKey()
     }
 
     /// Click the shortcut button, then press the new shortcut. Esc or a second click cancels.
@@ -467,14 +492,16 @@ final class RecorderModel {
         // Off while capturing, or pressing the current shortcut would zoom instead of being captured.
         zoomHotKey?.unregister()
         zoomHotKey = nil
-        shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .otherMouseDown]) { [weak self] event in
             guard let self else { return event }
-            if event.keyCode == 53 { // Esc
+            if event.type == .otherMouseDown {
+                if let s = Shortcut(mouseButton: event.buttonNumber) { finishCapturing(s) }
+            } else if event.keyCode == 53 { // Esc
                 finishCapturing(nil)
             } else if let s = Shortcut(event: event) {
                 finishCapturing(s)
             } else {
-                shortcutHint = "Hold ⌘, ⌃ or ⌥ too, or use an F-key"
+                shortcutHint = "Hold ⌘, ⌃ or ⌥ too, use an F-key, or press a mouse button"
             }
             return nil
         }
@@ -486,6 +513,8 @@ final class RecorderModel {
         capturingShortcut = false
         shortcutHint = nil
         if let shortcut {
+            // A mouse button needs Accessibility access; ask now, while you're looking at the app.
+            if shortcut.mouseButton != nil { _ = HotKey.mouseAccess(prompt: true) }
             zoomShortcut = shortcut // registers it
         } else {
             registerZoomHotKey()

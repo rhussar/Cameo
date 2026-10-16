@@ -174,17 +174,31 @@ private struct ZoomKeyButton: View {
             if model.capturingShortcut {
                 Label(model.shortcutHint ?? "Press a shortcut…", systemImage: "keyboard")
             } else {
-                Label("Zoom  \(model.zoomShortcut.label)", systemImage: model.zoomShortcutTaken ? "exclamationmark.triangle" : "plus.magnifyingglass")
+                Label("Zoom  \(model.zoomShortcut.label)", systemImage: problem ? "exclamationmark.triangle" : icon)
             }
         }
         .tint(model.capturingShortcut ? .accentColor : nil)
         .buttonStyle(.bordered)
         .fixedSize()
         .help(help)
+        if model.zoomShortcutNeedsAccess, !model.capturingShortcut {
+            Button("Allow Mouse", action: model.requestMouseAccess)
+                .buttonStyle(.borderedProminent)
+                .help("DemoRec needs Accessibility access to use a mouse button as a shortcut")
+        }
     }
 
+    private var problem: Bool { model.zoomShortcutTaken || model.zoomShortcutNeedsAccess }
+    private var icon: String { model.zoomShortcut.mouseButton == nil ? "plus.magnifyingglass" : "computermouse" }
+
     private var help: String {
-        if model.capturingShortcut { return "Press the shortcut you want for zooming. Esc cancels." }
+        if model.capturingShortcut {
+            return "Press the shortcut you want for zooming: a key combo, or a mouse button with the pointer over DemoRec "
+                + "(middle, back, forward or a side button). Esc cancels."
+        }
+        if model.zoomShortcutNeedsAccess {
+            return "To use \(model.zoomShortcut.label), allow DemoRec under Privacy & Security > Accessibility."
+        }
         if model.zoomShortcutTaken { return "Another app already uses \(model.zoomShortcut.label). Click to choose a different shortcut." }
         return "Press \(model.zoomShortcut.label) to zoom in on the pointer and follow it; press it again to zoom out. "
             + "Try it on the preview. Click to change the shortcut."
