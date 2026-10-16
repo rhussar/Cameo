@@ -95,7 +95,7 @@ private struct BottomBar: View {
         .toggleStyle(.button)
         .help("Styled: screen as a tilted card over a blurred backdrop")
         if model.styled {
-            TiltSlider(tilt: $model.tilt, width: wide ? 130 : 90)
+            TiltSlider(tilt: $model.tilt, width: wide ? 160 : 110)
         }
         ZoomKeyButton(model: model)
     }
@@ -401,7 +401,10 @@ private struct TiltSlider: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "rotate.3d")
-            Slider(value: $tilt, in: -15...15).frame(width: width)
+            Slider(value: $tilt, in: -45...45).frame(width: width)
+            Text("\(Int(tilt.rounded()))°")
+                .font(.caption).monospacedDigit()
+                .frame(width: 30, alignment: .leading)
         }
         .foregroundStyle(.secondary)
         .help("Tilt: \(Int(tilt.rounded()))°")
