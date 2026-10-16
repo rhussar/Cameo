@@ -109,11 +109,11 @@ final class RecorderModel {
             updateScreenPreviewLayout()
         }
     }
-    /// Zoom in on clicks and pauses. The zoom hotkey works either way.
-    var autoZoom: Bool {
+    /// How much the screen zooms on its own on clicks and pauses. The zoom hotkey works at every strength.
+    var zoomStrength: ZoomStrength {
         didSet {
-            UserDefaults.standard.set(autoZoom, forKey: "autoZoom")
-            screenPreview.liveZoom.setAuto(autoZoom)
+            UserDefaults.standard.set(zoomStrength.rawValue, forKey: "zoomStrength")
+            screenPreview.liveZoom.setSettings(ZoomSettings(strength: zoomStrength))
         }
     }
     /// Card tilt in degrees when styled; positive brings the left edge closer.
@@ -257,7 +257,9 @@ final class RecorderModel {
         mirror = d.bool(forKey: "mirror")
         styled = d.bool(forKey: "styled")
         tilt = d.object(forKey: "tilt") as? Double ?? Stage().tilt
-        autoZoom = d.object(forKey: "autoZoom") as? Bool ?? true
+        // Before there were strengths, auto-zoom was on or off.
+        zoomStrength = d.string(forKey: "zoomStrength").flatMap(ZoomStrength.init(rawValue:))
+            ?? (d.object(forKey: "autoZoom") as? Bool == false ? .off : .subtle)
         cameraID = d.string(forKey: "cameraID")
         microphoneID = d.string(forKey: "microphoneID")
         format = d.string(forKey: "format").flatMap(OutputFormat.init(rawValue:)) ?? .original
@@ -268,7 +270,7 @@ final class RecorderModel {
         preview.setMirror(mirror)
         preview.setLook(look)
         updateScreenPreviewLayout()
-        screenPreview.liveZoom.setAuto(autoZoom)
+        screenPreview.liveZoom.setSettings(ZoomSettings(strength: zoomStrength))
         preview.onImage = { [weak self] in self?.previewImage = $0 }
         screenPreview.onImage = { [weak self] in self?.screenImage = $0 }
         refreshDevices()
@@ -510,7 +512,7 @@ final class RecorderModel {
         pill.hide()
         let track = cursor?.stop()
         cursor = nil
-        let zoom = ZoomSettings(auto: autoZoom)
+        let zoom = ZoomSettings(strength: zoomStrength)
         mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate()
         var layout = Layout(corner: corner, scale: size, mirror: mirror)

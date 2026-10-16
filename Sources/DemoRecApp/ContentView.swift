@@ -97,11 +97,7 @@ private struct BottomBar: View {
         if model.styled {
             TiltSlider(tilt: $model.tilt, width: wide ? 130 : 90)
         }
-        Toggle(isOn: $model.autoZoom) {
-            Image(systemName: "plus.magnifyingglass")
-        }
-        .toggleStyle(.button)
-        .help("Auto-zoom: zoom in where you click or pause. Press \(HotKey.zoomLabel) while recording to zoom anywhere.")
+        ZoomPicker(model: model)
     }
 
     @ViewBuilder private var primary: some View {
@@ -166,6 +162,33 @@ private struct RecordingsMenu: View {
         .fixedSize()
         .help("Your recordings: show one in Finder")
         .onAppear(perform: model.loadRecordings)
+    }
+}
+
+/// How much the screen zooms on its own. ⌃⌥Z zooms at every setting.
+private struct ZoomPicker: View {
+    @Bindable var model: RecorderModel
+
+    var body: some View {
+        Menu {
+            ForEach(ZoomStrength.allCases, id: \.self) { s in
+                Button {
+                    model.zoomStrength = s
+                } label: {
+                    Image(systemName: s == model.zoomStrength ? "checkmark" : "")
+                    Text(s.name)
+                    Text(s.note)
+                }
+            }
+            Divider()
+            Text("Press \(HotKey.zoomLabel) to zoom in on the pointer, at any setting")
+        } label: {
+            Label(model.zoomStrength == .off ? "Zoom off" : "Zoom: \(model.zoomStrength.name)",
+                  systemImage: model.zoomStrength == .off ? "minus.magnifyingglass" : "plus.magnifyingglass")
+        }
+        .menuStyle(.button)
+        .fixedSize()
+        .help("Auto-zoom: how much the screen zooms in where you click or pause. Try it on the preview.")
     }
 }
 

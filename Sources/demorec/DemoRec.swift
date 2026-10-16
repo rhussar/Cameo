@@ -88,9 +88,10 @@ struct Composite: AsyncParsableCommand {
     @Option(name: .customLong("output-height"), help: "Downscale the output to this height (keeps aspect). Default: native screen size.") var outputHeight: Int?
     @Option(help: "Output file. Default: final.mp4 in the session folder.") var output: String?
     @Option(help: "Frame size preset: \(OutputFormat.allCases.map(\.rawValue).joined(separator: ", ")).") var format: OutputFormat = .original
-    @Flag(name: .customLong("no-auto-zoom"), help: "Don't zoom in on clicks and pauses (spots marked with the hotkey still zoom).") var noAutoZoom = false
+    @Option(help: "How much the screen zooms on its own: \(ZoomStrength.allCases.map(\.rawValue).joined(separator: ", ")). Spots marked with the hotkey zoom at every strength.") var zoom: ZoomStrength = .subtle
+    @Flag(name: .customLong("no-auto-zoom"), help: "Same as --zoom off.") var noAutoZoom = false
     @Flag(name: .customLong("no-zoom"), help: "Never zoom, ignoring cursor.json.") var noZoom = false
-    @Option(name: .customLong("zoom-level"), help: "How far zooms go in, e.g. 2 = twice as close.") var zoomLevel: Double = ZoomSettings().level
+    @Option(name: .customLong("zoom-level"), help: "How far zooms go in, e.g. 2 = twice as close. Default: set by --zoom (1.4 to 1.8).") var zoomLevel: Double?
     @Option(help: "Show only part of the screen: x,y,width,height as fractions of it from the top-left, e.g. 0.25,0,0.5,1.") var crop: String?
     @Option(help: "Look preset for you: \(Look.presets.map { $0.name.lowercased() }.joined(separator: ", ")).") var look: String = "natural"
 
@@ -137,7 +138,7 @@ struct Composite: AsyncParsableCommand {
         }
         let cursor = noZoom ? nil : CursorTrack.load(from: dir)
         let transcoder = Transcoder(layout: layout, fps: fps, outputHeight: outputHeight, quality: quality, maskEnabled: !noMask,
-                                    cursor: cursor, zoom: ZoomSettings(auto: !noAutoZoom, level: zoomLevel))
+                                    cursor: cursor, zoom: ZoomSettings(strength: noAutoZoom ? .off : zoom, level: zoomLevel))
         try await transcoder.run(screenURL: screenURL, cameraURL: cameraURL, outputURL: outURL)
         print("Wrote \(outURL.path)")
     }
@@ -158,3 +159,4 @@ func waitForInterrupt() async {
 extension Corner: ExpressibleByArgument {}
 extension MaskQuality: ExpressibleByArgument {}
 extension OutputFormat: ExpressibleByArgument {}
+extension ZoomStrength: ExpressibleByArgument {}

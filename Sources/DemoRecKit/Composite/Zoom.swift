@@ -9,16 +9,61 @@ public struct ZoomState: Sendable, Equatable {
     public static let none = ZoomState(scale: 1, x: 0.5, y: 0.5)
 }
 
-public struct ZoomSettings: Sendable {
-    /// Zoom in on clicks and on spots where the pointer comes to rest. Off = only the spots you mark with the hotkey.
-    public var auto: Bool = true
-    /// How far in, e.g. 2 = half the screen's width fills the frame.
-    public var level: Double = 1.8
+/// How eagerly and how hard the screen zooms on its own. ⌃⌥Z marks zoom at every strength, even Off.
+public enum ZoomStrength: String, CaseIterable, Sendable {
+    case off, subtle, normal, strong
 
-    public init(auto: Bool = true, level: Double = 1.8) {
-        self.auto = auto
-        self.level = level
+    public var name: String { rawValue.capitalized }
+
+    public var note: String {
+        switch self {
+        case .off: "Only where you press ⌃⌥Z"
+        case .subtle: "A gentle zoom on clicks"
+        case .normal: "Clicks, and where you stop to point at something"
+        case .strong: "Close and quick, on every click and pause"
+        }
     }
+}
+
+public struct ZoomSettings: Sendable {
+    public var strength: ZoomStrength
+    /// How far in, e.g. 2 = half the screen's width fills the frame.
+    public var level: Double
+    /// Spring stiffness for zooming in and out, and for panning. Lower is slower and calmer (~4 takes about a second).
+    var zoomSpeed: Double
+    var panSpeed: Double
+    /// How much of the view the pointer can roam before the camera follows it: 0.8 = all but the outer 10% each side.
+    var followSlack: Double
+    /// Zoom where the pointer comes to rest, not just on clicks.
+    var usesRests: Bool
+    /// The pointer counts as resting after staying put this long, once it has travelled this far (fraction of the screen).
+    var restMinDuration: Double
+    var restMinTravel: Double
+    /// Moments closer than this stay zoomed and pan between them.
+    var mergeGap: Double
+    /// After zooming out, wait this long before zooming in again on its own.
+    var cooldown: Double
+
+    /// `level` overrides the strength's own.
+    public init(strength: ZoomStrength = .subtle, level: Double? = nil) {
+        self.strength = strength
+        switch strength {
+        case .off, .subtle:
+            // Off still has to look good for ⌃⌥Z marks.
+            self.level = 1.4; zoomSpeed = 4.5; panSpeed = 4.5; followSlack = 0.8
+            usesRests = false; restMinDuration = 1.5; restMinTravel = 0.15; mergeGap = 3; cooldown = 6
+        case .normal:
+            self.level = 1.6; zoomSpeed = 5.5; panSpeed = 5.5; followSlack = 0.75
+            usesRests = true; restMinDuration = 1.5; restMinTravel = 0.15; mergeGap = 2.5; cooldown = 4
+        case .strong:
+            self.level = 1.8; zoomSpeed = 7; panSpeed = 8; followSlack = 0.6
+            usesRests = true; restMinDuration = 0.8; restMinTravel = 0.08; mergeGap = 1.5; cooldown = 0
+        }
+        if let level { self.level = max(level, 1) }
+    }
+
+    /// Zooms on its own at all, rather than only on ⌃⌥Z marks.
+    public var auto: Bool { strength != .off }
 }
 
 /// Plans a smooth, Screen Studio-style camera from a cursor track: zoom in around clicks, pauses and marked
@@ -30,32 +75,35 @@ public enum ZoomPlanner {
         var start: Double
         var end: Double
         var focus: CursorTrack.Point
+        /// Contains a ⌃⌥Z mark, which always zooms.
+        var marked = false
     }
 
     // Timings, in seconds. The lead lets the camera arrive just as the moment happens.
     static let clickLead = 0.5, clickHold = 2.2
     static let markLead = 0.3, markHold = 3.0
     static let restLead = 0.4, restMinHold = 1.5, restMaxHold = 4.0
-    /// Moments closer than this stay zoomed and pan between them.
-    static let mergeGap = 1.5
-    /// The pointer counts as resting when it stays this close (fraction of the screen) for restMinDuration.
-    static let restRadius = 0.012, restMinDuration = 0.8
-    /// A rest only counts when the pointer travelled this far since the last one, so an idle pointer doesn't keep zooming.
-    static let restMinTravel = 0.08
+    /// The pointer counts as resting while it stays this close (fraction of the screen).
+    static let restRadius = 0.012
 
     static func segments(for track: CursorTrack, settings: ZoomSettings) -> [Segment] {
-        var windows: [Segment] = track.marks.map { Segment(start: $0.t - markLead, end: $0.t + markHold, focus: $0) }
+        var windows: [Segment] = track.marks.map { Segment(start: $0.t - markLead, end: $0.t + markHold, focus: $0, marked: true) }
         if settings.auto {
             windows += track.clicks.map { Segment(start: $0.t - clickLead, end: $0.t + clickHold, focus: $0) }
-            windows += rests(in: track.samples).map { rest in
-                Segment(start: rest.point.t - restLead, end: rest.point.t + min(max(rest.duration, restMinHold), restMaxHold), focus: rest.point)
+            if settings.usesRests {
+                windows += rests(in: track.samples, settings: settings).map { rest in
+                    Segment(start: rest.point.t - restLead, end: rest.point.t + min(max(rest.duration, restMinHold), restMaxHold), focus: rest.point)
+                }
             }
         }
         windows.sort { $0.start < $1.start }
         var merged: [Segment] = []
         for w in windows {
-            if let last = merged.last, w.start - last.end < mergeGap {
+            if let last = merged.last, w.start - last.end < settings.mergeGap {
                 merged[merged.count - 1].end = max(last.end, w.end)
+                merged[merged.count - 1].marked = last.marked || w.marked
+            } else if let last = merged.last, w.start - last.end < settings.cooldown, !w.marked {
+                continue // just zoomed out: let the full view breathe before zooming in again
             } else {
                 merged.append(w)
             }
@@ -64,7 +112,7 @@ public enum ZoomPlanner {
     }
 
     /// Places where the pointer stopped after going somewhere new.
-    static func rests(in samples: [CursorTrack.Point]) -> [(point: CursorTrack.Point, duration: Double)] {
+    static func rests(in samples: [CursorTrack.Point], settings: ZoomSettings) -> [(point: CursorTrack.Point, duration: Double)] {
         guard var anchor = samples.first else { return [] }
         var result: [(CursorTrack.Point, Double)] = []
         var lastRest = anchor // where the recording starts counts as already looked at
@@ -72,7 +120,7 @@ public enum ZoomPlanner {
         func finishRun() {
             let duration = runEnd.t - anchor.t
             let travel = hypot(anchor.x - lastRest.x, anchor.y - lastRest.y)
-            guard duration >= restMinDuration, travel >= restMinTravel,
+            guard duration >= settings.restMinDuration, travel >= settings.restMinTravel,
                   (0...1).contains(anchor.x), (0...1).contains(anchor.y) else { return }
             result.append((anchor, duration))
             lastRest = anchor
@@ -93,7 +141,7 @@ public enum ZoomPlanner {
         let segments = segments(for: track, settings: settings)
         guard !segments.isEmpty, frames > 0 else { return Array(repeating: .none, count: max(frames, 0)) }
         let dt = 1 / Double(fps)
-        var camera = Camera(level: settings.level)
+        var camera = Camera(settings: settings)
         var segIndex = 0
         var path: [ZoomState] = []
         path.reserveCapacity(frames)
@@ -113,15 +161,19 @@ public enum ZoomPlanner {
     /// of the view, and back out to the whole screen when there isn't. Springs keep every move smooth.
     struct Camera {
         let level: Double
-        /// Half the visible width/height when fully zoomed; the pointer can roam the middle 60% before the camera follows.
+        let zoomSpeed: Double
+        let panSpeed: Double
+        /// How far (fraction of the screen) the pointer can get from the middle of the view before the camera follows.
         let deadZone: Double
         var scale = Spring(value: 1), x = Spring(value: 0.5), y = Spring(value: 0.5)
         var targetX = 0.5, targetY = 0.5
         var wasZoomed = false
 
-        init(level: Double) {
-            self.level = max(level, 1)
-            deadZone = 0.5 / self.level * 0.6
+        init(settings: ZoomSettings) {
+            level = max(settings.level, 1)
+            zoomSpeed = settings.zoomSpeed
+            panSpeed = settings.panSpeed
+            deadZone = 0.5 / level * settings.followSlack
         }
 
         var isSettled: Bool {
@@ -146,9 +198,9 @@ public enum ZoomPlanner {
                 }
             }
             wasZoomed = focus != nil
-            scale.step(toward: focus == nil ? 1 : level, omega: 7, dt: dt)
-            x.step(toward: targetX, omega: 8, dt: dt)
-            y.step(toward: targetY, omega: 8, dt: dt)
+            scale.step(toward: focus == nil ? 1 : level, omega: zoomSpeed, dt: dt)
+            x.step(toward: targetX, omega: panSpeed, dt: dt)
+            y.step(toward: targetY, omega: panSpeed, dt: dt)
             // Keep the view on the screen at whatever zoom it's at right now.
             let s = max(scale.value, 1)
             let half = 0.5 / s
@@ -209,22 +261,27 @@ public final class LiveZoom: @unchecked Sendable {
     private var anchor: CursorTrack.Point?
     private var lastRest: CursorTrack.Point?
     private var resting = false
+    /// When the last zoom ended, for the cooldown.
+    private var zoomedOutAt = -Double.infinity
 
     public init(settings: ZoomSettings = ZoomSettings()) {
         self.settings = settings
-        camera = ZoomPlanner.Camera(level: settings.level)
+        camera = ZoomPlanner.Camera(settings: settings)
     }
 
-    public func setAuto(_ auto: Bool) {
-        lock.lock(); defer { lock.unlock() }
-        settings.auto = auto
-        if !auto { zoomedUntil = -.infinity } // drop any auto zoom in progress
+    /// Switches strength, starting over from the whole screen.
+    public func setSettings(_ settings: ZoomSettings) {
+        lock.lock()
+        self.settings = settings
+        lock.unlock()
+        reset()
     }
 
     /// Forget everything, e.g. when what's previewed changes.
     public func reset() {
         lock.lock(); defer { lock.unlock() }
-        camera = ZoomPlanner.Camera(level: settings.level)
+        camera = ZoomPlanner.Camera(settings: settings)
+        zoomedOutAt = -.infinity
         focus = nil; zoomedUntil = -.infinity; cursor = nil; anchor = nil; lastRest = nil; resting = false
     }
 
@@ -238,20 +295,20 @@ public final class LiveZoom: @unchecked Sendable {
             return
         }
         let duration = p.t - a.t
-        if !resting, duration >= ZoomPlanner.restMinDuration, let last = lastRest,
-           hypot(a.x - last.x, a.y - last.y) >= ZoomPlanner.restMinTravel,
+        if !resting, duration >= settings.restMinDuration, let last = lastRest,
+           hypot(a.x - last.x, a.y - last.y) >= settings.restMinTravel,
            (0...1).contains(a.x), (0...1).contains(a.y) {
             resting = true
             lastRest = a
         }
-        if resting, settings.auto {
-            zoom(on: a, until: a.t + min(max(duration, ZoomPlanner.restMinHold), ZoomPlanner.restMaxHold))
+        if resting, settings.auto, settings.usesRests {
+            autoZoom(on: a, until: a.t + min(max(duration, ZoomPlanner.restMinHold), ZoomPlanner.restMaxHold))
         }
     }
 
     public func clicked(_ p: CursorTrack.Point) {
         lock.lock(); defer { lock.unlock() }
-        if settings.auto { zoom(on: p, until: p.t + ZoomPlanner.clickHold) }
+        if settings.auto { autoZoom(on: p, until: p.t + ZoomPlanner.clickHold) }
     }
 
     public func marked(_ p: CursorTrack.Point) {
@@ -267,8 +324,18 @@ public final class LiveZoom: @unchecked Sendable {
 
     public func step(now: Double, dt: Double) -> ZoomState {
         lock.lock(); defer { lock.unlock() }
-        if now > zoomedUntil { focus = nil }
+        if now > zoomedUntil, focus != nil {
+            focus = nil
+            zoomedOutAt = now
+        }
         return camera.step(t: now, focus: focus, cursor: cursor.map { ($0.x, $0.y) }, dt: dt)
+    }
+
+    /// A zoom it decided on itself, which waits out the cooldown. It can't see ahead to stay zoomed between
+    /// close moments like the video does, so it holds a zoom a little longer instead.
+    private func autoZoom(on p: CursorTrack.Point, until end: Double) {
+        guard focus != nil || p.t - zoomedOutAt >= settings.cooldown else { return }
+        zoom(on: p, until: end + settings.mergeGap / 2)
     }
 
     private func zoom(on p: CursorTrack.Point, until end: Double) {

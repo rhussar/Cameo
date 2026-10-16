@@ -29,11 +29,14 @@ or ultrawide monitor. The preview switches to the whole screen with a box over i
 (e.g. YouTube 16:9) the box keeps that shape so the crop fills the video; with Original size the video takes
 the box's shape. Each screen remembers its own crop; **Whole Screen** clears it. Zoom works inside the crop.
 
-**Auto-zoom** (the magnifier button, on by default) zooms the screen in where you click and where
-the pointer comes to rest after moving somewhere new, follows the pointer while zoomed, and zooms
-back out when things go quiet. Moments close together become one zoom that pans. Whether it's on
-or off, press **⌃⌥Z** while recording to zoom in on wherever the pointer is; the magnifier in the
-stop pill bounces to confirm. Only the screen zooms, not you.
+**Zoom** sets how much the screen zooms in on its own: **Subtle** (the default) gently zooms on
+clicks, **Normal** zooms a little closer and also where you stop the pointer to show something, **Strong** is
+close and quick on every click and pause, and **Off** leaves it to you. While zoomed it follows the
+pointer only when it nears the edge, and moments close together become one zoom that pans; after
+zooming out it waits a few seconds before zooming in on its own again. At any setting, press **⌃⌥Z** to
+zoom in on wherever the pointer is; while recording the magnifier in the stop pill bounces to confirm.
+The setup preview zooms live as you click around, so you can judge a setting before recording. Only
+the screen zooms, not you.
 
 ## Build (CLI)
 
@@ -93,8 +96,8 @@ the cutout over the screen frame, and writes `final.mp4` with the mic audio pass
 | `--no-mask` | off | overlay the whole camera frame (debugging / picture-in-picture) |
 | `--crop <x,y,w,h>` | whole screen | show only part of the screen, as fractions from the top-left, e.g. `0.25,0,0.5,1` |
 | `--output <file>` | `final.mp4` in the session folder | output path |
-| `--zoom-level` | `1.8` | how far zooms go in |
-| `--no-auto-zoom` | off | don't zoom on clicks and pauses (⌃⌥Z marks from the app still zoom) |
+| `--zoom` | `subtle` | `off`, `subtle`, `normal`, `strong` (⌃⌥Z marks from the app zoom at every setting) |
+| `--zoom-level` | by `--zoom` | how far zooms go in: 1.4 subtle, 1.6 normal, 1.8 strong |
 | `--no-zoom` | off | never zoom, ignoring `cursor.json` |
 
 By default the screen is staged like the reference video: a rounded, slightly tilted card with a
