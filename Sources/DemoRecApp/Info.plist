@@ -5,11 +5,11 @@
 	<key>CFBundleIdentifier</key>
 	<string>com.ronanhussar.demorec.app</string>
 	<key>CFBundleName</key>
-	<string>DemoRec</string>
+	<string>Cameo</string>
 	<key>CFBundleDisplayName</key>
-	<string>DemoRec</string>
+	<string>Cameo</string>
 	<key>CFBundleExecutable</key>
-	<string>DemoRec</string>
+	<string>Cameo</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundlePackageType</key>
@@ -22,13 +22,15 @@
 	<string>15.0</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.video</string>
+	<key>LSUIElement</key>
+	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSCameraUseContinuityCameraDeviceType</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>DemoRec records your webcam so you can appear in the corner of your demo.</string>
+	<string>Cameo records your webcam so you can appear in the corner of your demo.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>DemoRec records your voice for the demo narration.</string>
+	<string>Cameo records your voice for the demo narration.</string>
 </dict>
 </plist>

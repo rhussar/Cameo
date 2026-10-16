@@ -1,4 +1,4 @@
-# DemoRec
+# Cameo
 
 Record a demo the way Dan Fessler's TrellisWM launch video was made: a full-resolution
 screen recording with a background-removed cutout of you floating in a corner, and your
@@ -11,12 +11,12 @@ AVFoundation, Vision, CoreImage). No models to download, no cloud.
 scripts/build-app.sh
 ```
 
-This installs `~/Applications/DemoRec.app`. Open it, click a corner of the preview to choose
+This installs `~/Applications/Cameo.app` (the app was called DemoRec before; the CLI is still `demorec`). Open it, click a corner of the preview to choose
 where you appear, drag the slider to set your size, and hit **Start Recording**. After a
 3-second countdown the window shrinks to a small floating pill (hidden from the recording).
 Click **Stop** and the app makes the video, then offers **Play** and **Show in Finder**.
 Videos go side by side in `~/Movies/DemoRec/`, named like macOS's own screen recordings
-(`DemoRec 2026-10-15 at 20.27.42.mp4`). The raw screen, camera and pointer recordings are kept in
+(`Cameo 2026-10-15 at 20.27.42.mp4`). The raw screen, camera and pointer recordings are kept in
 `~/Library/Application Support/DemoRec/Recordings/` only while the video is being made, then
 deleted; if making the video fails they stay there, so the recording isn't lost.
 

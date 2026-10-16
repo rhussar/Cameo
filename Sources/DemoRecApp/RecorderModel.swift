@@ -222,7 +222,7 @@ final class RecorderModel {
             alert.informativeText = "If you quit now, this recording will be lost."
             alert.addButton(withTitle: "Keep Recording")
         case .processing:
-            alert.messageText = "DemoRec is still making your video."
+            alert.messageText = "Cameo is still making your video."
             alert.informativeText = "If you quit now, the video won't be finished."
             alert.addButton(withTitle: "Keep Making It")
         default:
@@ -244,7 +244,16 @@ final class RecorderModel {
     private let preview = CameraPreview()
     private let screenPreview = ScreenPreview()
     private let pill = PillPanel()
-    weak var mainWindow: NSWindow?
+    weak var mainWindow: NSWindow? {
+        didSet {
+            guard mainWindow !== oldValue, let mainWindow else { return }
+            NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: mainWindow, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.windowClosed() }
+            }
+        }
+    }
+    /// The window was closed while you were setting up, so the camera and screen previews were stopped.
+    private var previewsPaused = false
     private var refreshLoop: Task<Void, Never>?
     private var task: Task<Void, Never>?
     private var screen: ScreenRecorder?
@@ -330,7 +339,29 @@ final class RecorderModel {
         preview.start(deviceID: previewCameraID)
     }
 
+    var isRecording: Bool {
+        if case .recording = phase { return true }
+        return false
+    }
+    var isDone: Bool {
+        if case .done = phase { return true }
+        return false
+    }
+
+    /// Closing the window (Cameo stays in the menu bar) turns the camera and screen previews off.
+    private func windowClosed() {
+        guard isSetup || isDone else { return }
+        cropping = false
+        refreshLoop?.cancel()
+        previewsPaused = true
+        Task { await stopPreviews() }
+    }
+
     func appeared() {
+        if previewsPaused {
+            previewsPaused = false
+            startScreenPreview()
+        }
         if zoomHotKey == nil, !capturingShortcut { registerZoomHotKey() }
         Task {
             if await AVCaptureDevice.requestAccess(for: .video) {
@@ -553,7 +584,7 @@ final class RecorderModel {
             do {
                 _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             } catch {
-                phase = .failed("DemoRec needs permission to record your screen. Turn it on in System Settings, then try again.", needsSettings: true)
+                phase = .failed("Cameo needs permission to record your screen. Turn it on in System Settings, then try again.", needsSettings: true)
                 return
             }
             for n in [3, 2, 1] {

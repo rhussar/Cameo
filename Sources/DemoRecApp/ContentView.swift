@@ -35,22 +35,45 @@ private struct BottomBar: View {
                 if case .failed(let msg, let needsSettings) = model.phase {
                     Notice(text: msg, action: needsSettings ? ("Open Settings", { model.openPrivacySettings() }) : nil)
                 }
-                // One row when it fits; otherwise "what" on top and "how it looks" + Record below.
+                // One row when it fits; otherwise what you record on top, how it looks + Record below.
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: spacing) {
-                        sources
-                        adjustments
+                        screenGroup
+                        inputsGroup
+                        youGroup
+                        effectsGroup
                         Spacer(minLength: 8)
                         primary
                     }
-                    VStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: spacing) {
-                            sources
+                            screenGroup
+                            inputsGroup
                             Spacer(minLength: 0)
                         }
                         HStack(spacing: spacing) {
-                            adjustments
+                            youGroup
+                            effectsGroup
                             Spacer(minLength: 8)
+                            primary
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: spacing) {
+                            screenGroup
+                            Spacer(minLength: 0)
+                        }
+                        HStack(spacing: spacing) {
+                            inputsGroup
+                            Spacer(minLength: 0)
+                        }
+                        HStack(spacing: spacing) {
+                            youGroup
+                            effectsGroup
+                            Spacer(minLength: 0)
+                        }
+                        HStack {
+                            Spacer()
                             primary
                         }
                     }
@@ -67,37 +90,52 @@ private struct BottomBar: View {
     private var wide: Bool { model.windowWidth >= 1400 }
     private var spacing: CGFloat { wide ? 20 : 14 }
 
-    /// What you're recording, what shape the video is, and which camera.
-    @ViewBuilder private var sources: some View {
-        SourcePicker(model: model)
-        Toggle(isOn: $model.cropping) {
-            Image(systemName: "crop")
+    /// What you're recording, which part of it, and what shape the video is.
+    private var screenGroup: some View {
+        ControlGroupBox(title: "Screen") {
+            SourcePicker(model: model)
+            Toggle(isOn: $model.cropping) {
+                Image(systemName: "crop")
+            }
+            .toggleStyle(.button)
+            .help(model.crop == nil ? "Crop: show only part of the screen" : "Crop: change which part of the screen is shown")
+            FormatPicker(model: model)
         }
-        .toggleStyle(.button)
-        .help(model.crop == nil ? "Crop: show only part of the screen" : "Crop: change which part of the screen is shown")
-        FormatPicker(model: model)
-        CameraPicker(model: model)
-        MicrophonePicker(model: model)
     }
 
-    /// How it looks.
-    @ViewBuilder private var adjustments: some View {
-        LookButton(model: model)
-        SizeSlider(size: $model.size, width: wide ? 150 : 100)
-        Toggle(isOn: $model.mirror) {
-            Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+    private var inputsGroup: some View {
+        ControlGroupBox(title: "Camera & mic") {
+            CameraPicker(model: model)
+            MicrophonePicker(model: model)
         }
-        .toggleStyle(.button)
-        .help("Mirror camera")
-        Toggle(isOn: $model.styled) {
-            Image(systemName: "rectangle.on.rectangle.angled")
+    }
+
+    /// How you look.
+    private var youGroup: some View {
+        ControlGroupBox(title: "You") {
+            LookButton(model: model)
+            SizeSlider(size: $model.size, width: wide ? 130 : 90)
+            Toggle(isOn: $model.mirror) {
+                Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+            }
+            .toggleStyle(.button)
+            .help("Mirror camera")
         }
-        .toggleStyle(.button)
-        .help("Styled: screen as a tilted card over a blurred backdrop")
-        if model.styled {
-            TiltSlider(tilt: $model.tilt, width: wide ? 160 : 110)
+    }
+
+    /// How the screen looks and moves.
+    private var effectsGroup: some View {
+        ControlGroupBox(title: "Style") {
+            Toggle(isOn: $model.styled) {
+                Image(systemName: "rectangle.on.rectangle.angled")
+            }
+            .toggleStyle(.button)
+            .help("Styled: screen as a tilted card over a blurred backdrop")
+            if model.styled {
+                TiltSlider(tilt: $model.tilt, width: wide ? 130 : 90)
+            }
+            ZoomKeyButton(model: model)
         }
-        ZoomKeyButton(model: model)
     }
 
     @ViewBuilder private var primary: some View {
@@ -146,7 +184,6 @@ private struct RecordingsMenu: View {
         Button(action: model.openRecordingsFolder) {
             Image(systemName: "folder")
         }
-        .menuStyle(.button)
         .fixedSize()
         .help("Open your recordings folder in Finder")
         .accessibilityLabel("Open recordings folder")
@@ -172,7 +209,7 @@ private struct ZoomKeyButton: View {
         if model.zoomShortcutNeedsAccess, !model.capturingShortcut {
             Button("Allow Mouse", action: model.requestMouseAccess)
                 .buttonStyle(.borderedProminent)
-                .help("DemoRec needs Accessibility access to use a mouse button as a shortcut")
+                .help("Cameo needs Accessibility access to use a mouse button as a shortcut")
         }
     }
 
@@ -181,11 +218,11 @@ private struct ZoomKeyButton: View {
 
     private var help: String {
         if model.capturingShortcut {
-            return "Press the shortcut you want for zooming: a key combo, or a mouse button with the pointer over DemoRec "
+            return "Press the shortcut you want for zooming: a key combo, or a mouse button with the pointer over Cameo "
                 + "(middle, back, forward or a side button). Esc cancels."
         }
         if model.zoomShortcutNeedsAccess {
-            return "To use \(model.zoomShortcut.label), allow DemoRec under Privacy & Security > Accessibility."
+            return "To use \(model.zoomShortcut.label), allow Cameo under Privacy & Security > Accessibility."
         }
         if model.zoomShortcutTaken { return "Another app already uses \(model.zoomShortcut.label). Click to choose a different shortcut." }
         return "Press \(model.zoomShortcut.label) to zoom in on the pointer and follow it; press it again to zoom out. "
@@ -208,6 +245,7 @@ private struct FormatPicker: View {
         } label: {
             Label(label, systemImage: "aspectratio")
         }
+        .menuStyle(.button)
         .fixedSize()
         .help(sizeHelp)
     }
@@ -243,6 +281,7 @@ private struct LookButton: View {
         } label: {
             Label(model.lookName, systemImage: "camera.filters")
         }
+        .fixedSize()
         .help("Adjust how you look")
         .popover(isPresented: $model.lookOpen, arrowEdge: .top) {
             LookPanel(model: model)
@@ -401,7 +440,7 @@ private struct TiltSlider: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "rotate.3d")
+            Image(systemName: "perspective")
             Slider(value: $tilt, in: -45...45).frame(width: width)
             Text("\(Int(tilt.rounded()))°")
                 .font(.caption).monospacedDigit()
@@ -523,7 +562,7 @@ private struct Preview: View {
         let margin = size.height * RecorderModel.margin(for: model.corner)
         if model.cameraDenied {
             VStack(spacing: 8) {
-                Text("DemoRec needs your camera").foregroundStyle(.white)
+                Text("Cameo needs your camera").foregroundStyle(.white)
                 Button("Open Settings") { model.openPrivacySettings(camera: true) }
             }
             .padding(12)
@@ -734,6 +773,26 @@ private struct CropControls: View {
 }
 
 // MARK: - Bits
+
+/// A labelled cluster of related controls on a soft tile, so the settings read as a few groups instead of one long row.
+private struct ControlGroupBox<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title.uppercased())
+                .font(.system(size: 9, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 2)
+            HStack(spacing: 8) { content }
+        }
+        .padding(.horizontal, 9).padding(.top, 6).padding(.bottom, 8)
+        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .fixedSize()
+    }
+}
 
 private struct PrimaryButton: View {
     let title: String

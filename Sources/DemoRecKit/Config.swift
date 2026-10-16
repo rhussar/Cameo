@@ -180,15 +180,18 @@ public enum Session {
     public static let workBase = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("DemoRec/Recordings")
 
-    private static let videoName: DateFormatter = {
+    private static func videoName(_ app: String) -> DateFormatter {
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "en_US_POSIX")
-        fmt.dateFormat = "'DemoRec' yyyy-MM-dd 'at' HH.mm.ss"
+        fmt.dateFormat = "'\(app)' yyyy-MM-dd 'at' HH.mm.ss"
         return fmt
-    }()
+    }
+    private static let videoName = videoName("Cameo")
+    /// The app was called DemoRec before; its videos are named that way.
+    private static let videoNames = [videoName, videoName("DemoRec")]
 
     /// A new video's file in `base`, named for when it was recorded like macOS's own screen recordings,
-    /// e.g. "DemoRec 2026-10-15 at 20.27.42.mp4". Never one that's already there.
+    /// e.g. "Cameo 2026-10-15 at 20.27.42.mp4". Never one that's already there.
     public static func videoURL(recordedAt date: Date, in base: URL = defaultBase) throws -> URL {
         try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         let name = videoName.string(from: date)
@@ -205,7 +208,10 @@ public enum Session {
     public static func recordedAt(video: URL) -> Date? {
         let name = video.deletingPathExtension().lastPathComponent
         // "… at 20.27.42 2" was the second video that second.
-        return videoName.date(from: name) ?? name.lastIndex(of: " ").flatMap { videoName.date(from: String(name[..<$0])) }
+        for fmt in videoNames {
+            if let date = fmt.date(from: name) ?? name.lastIndex(of: " ").flatMap({ fmt.date(from: String(name[..<$0])) }) { return date }
+        }
+        return nil
     }
 
     public static func makeFolder(in base: URL = defaultBase) throws -> URL {
