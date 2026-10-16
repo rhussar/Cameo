@@ -1,4 +1,5 @@
 import AppKit
+import CoreMedia
 import DemoRecKit
 import Observation
 import SwiftUI
@@ -23,6 +24,33 @@ final class LivePreview {
     @ObservationIgnored private var screen: ScreenPreview?
     @ObservationIgnored private var person: CameraPreview?
     @ObservationIgnored private var recording = false
+    @ObservationIgnored private let zoomLink = ZoomLink()
+
+    /// For the recording's CursorRecorder: forwards the pointer and the zoom shortcut to the preview's zoom, so the
+    /// preview zooms with the recording. Times move from recording time to the host clock the preview steps on,
+    /// and points into the crop's coordinates, as in the setup preview.
+    nonisolated func pointerHandler(startTime: CMTime, crop: CGRect?) -> (CursorRecorder.Event) -> Void {
+        let link = zoomLink
+        let offset = startTime.seconds
+        let c = crop ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+        return { event in
+            func map(_ p: CursorTrack.Point) -> CursorTrack.Point {
+                CursorTrack.Point(t: p.t + offset, x: (p.x - c.minX) / c.width, y: (p.y - c.minY) / c.height)
+            }
+            func inside(_ p: CursorTrack.Point) -> Bool { (0...1).contains(p.x) && (0...1).contains(p.y) }
+            switch event {
+            case .zoomIn(let p):
+                let q = map(p)
+                guard inside(q) else { return }
+                link.zoomedIn(q)
+            case .zoomOut(let t): link.zoomedOut(t + offset)
+            case .move(let p): link.zoom?.moved(map(p))
+            case .click(let p):
+                let q = map(p)
+                if inside(q) { link.zoom?.clicked(q) }
+            }
+        }
+    }
 
     /// Called when recording starts. Opens the window if you had it on last time.
     func start(model: RecorderModel, camera: CameraRecorder, target: CaptureTarget?) {
@@ -59,12 +87,14 @@ final class LivePreview {
         self.person = person
 
         let screen = ScreenPreview()
+        screen.liveZoom.setSettings(RecorderModel.zoomSettings)
+        zoomLink.attach(screen.liveZoom)
         var stage: Stage?
         if model.styled {
             stage = Stage()
             stage?.tilt = model.tilt
         }
-        screen.setLayout(stage: stage, canvas: model.format.size, crop: model.crop, zoom: false)
+        screen.setLayout(stage: stage, canvas: model.format.size, crop: model.crop, zoom: true)
         screen.onImage = { [weak self] in self?.screenImage = $0 }
         let target = target
         Task { try? await screen.start(target: target) }
@@ -95,6 +125,8 @@ final class LivePreview {
     }
 
     private func close() {
+        zoomLink.attach(nil)
+        if !recording { zoomLink.clear() }
         camera?.onVideoFrame = nil
         if let screen { Task { await screen.stop() } }
         screen = nil
@@ -105,6 +137,36 @@ final class LivePreview {
         closer = nil
         screenImage = nil
         personImage = nil
+    }
+
+    /// Hands pointer events from the recorder's queue to whichever preview zoom is open, and remembers an ongoing
+    /// zoom so a preview opened mid-zoom starts zoomed in too.
+    private final class ZoomLink: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _zoom: LiveZoom?
+        private var zoomedAt: CursorTrack.Point?
+
+        var zoom: LiveZoom? { lock.withLock { _zoom } }
+
+        func attach(_ zoom: LiveZoom?) {
+            let pending = lock.withLock { () -> CursorTrack.Point? in
+                _zoom = zoom
+                return zoomedAt
+            }
+            if let zoom, let pending { zoom.zoomedIn(pending) }
+        }
+
+        func zoomedIn(_ p: CursorTrack.Point) {
+            let zoom = lock.withLock { zoomedAt = p; return _zoom }
+            zoom?.zoomedIn(p)
+        }
+
+        func zoomedOut(_ t: Double) {
+            let zoom = lock.withLock { zoomedAt = nil; return _zoom }
+            zoom?.zoomedOut(at: t)
+        }
+
+        func clear() { lock.withLock { zoomedAt = nil } }
     }
 
     private final class Closer: NSObject, NSWindowDelegate {

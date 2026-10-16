@@ -574,6 +574,7 @@ final class RecorderModel {
             cur.start()
             cursor = cur
             let since = Date()
+            cur.onEvent = LivePreview.shared.pointerHandler(startTime: t0, crop: crop)
             phase = .recording(since: since)
             pill.show(since: since, on: recordedScreen(), zoomHint: zoomHotKey == nil ? nil : zoomShortcut.label,
                       discard: { [weak self] in self?.discard() }, stop: { [weak self] in self?.stop() })
