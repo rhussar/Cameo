@@ -50,7 +50,7 @@ public struct ZoomSettings: Sendable {
         switch strength {
         case .off:
             // Zooms you ask for with the shortcut: close enough to read, smooth, and following the pointer.
-            self.level = 1.6; zoomSpeed = 4.5; panSpeed = 5; followSlack = 0.6
+            self.level = 1.6; zoomSpeed = 4.5; panSpeed = 5; followSlack = 0.8
             usesRests = false; restMinDuration = 1.5; restMinTravel = 0.15; mergeGap = 3; cooldown = 6
         case .subtle:
             self.level = 1.4; zoomSpeed = 4.5; panSpeed = 4.5; followSlack = 0.8
@@ -172,6 +172,10 @@ public enum ZoomPlanner {
 
     /// Moves the view: zoomed in on `focus` while there is one, following the pointer once it nears the edge
     /// of the view, and back out to the whole screen when there isn't. Springs keep every move smooth.
+    ///
+    /// Zooming in and out pivots on a point that stays put on screen, like pinching to zoom: in on the focus,
+    /// so the spot you're showing grows where it is instead of the view sliding around to find it; out from
+    /// wherever the view ended up. Only once fully zoomed in does the view pan, to keep up with the pointer.
     struct Camera {
         let level: Double
         let zoomSpeed: Double
@@ -180,6 +184,10 @@ public enum ZoomPlanner {
         let deadZone: Double
         var scale = Spring(value: 1), x = Spring(value: 0.5), y = Spring(value: 0.5)
         var targetX = 0.5, targetY = 0.5
+        /// The point the zoom pivots on while zooming in or out.
+        var pivotX = 0.5, pivotY = 0.5
+        /// Fully zoomed in and panning with the pointer, rather than zooming about the pivot.
+        var following = false
         var wasZoomed = false
 
         init(settings: ZoomSettings) {
@@ -194,30 +202,68 @@ public enum ZoomPlanner {
         }
 
         mutating func snap(to focus: CursorTrack.Point) {
-            aim(at: focus.x, focus.y)
-            scale.value = level; x.value = targetX; y.value = targetY
+            pivotX = focus.x; pivotY = focus.y
+            scale.value = level
+            startFollowing()
         }
 
         mutating func step(t: Double, focus: CursorTrack.Point?, cursor: (x: Double, y: Double)?, dt: Double) -> ZoomState {
             if let focus {
-                if !wasZoomed || t < focus.t {
-                    // Heading in: look where the moment is, not where the pointer is on its way.
+                if !wasZoomed, !following {
+                    // A fresh zoom: grow the focus in place.
+                    pivotX = focus.x; pivotY = focus.y
+                } else if following, t < focus.t {
+                    // Already zoomed and the next moment is coming up: pan over to it.
                     aim(at: focus.x, focus.y)
-                } else if let c = cursor {
-                    var tx = targetX, ty = targetY
-                    if abs(c.x - tx) > deadZone { tx = c.x - deadZone * (c.x > tx ? 1 : -1) }
-                    if abs(c.y - ty) > deadZone { ty = c.y - deadZone * (c.y > ty ? 1 : -1) }
-                    aim(at: tx, ty)
                 }
+            } else if following {
+                // Zooming out: pivot on the point that stays put from here back to the whole screen.
+                let s = max(scale.value, 1)
+                pivotX = Self.pivot(center: x.value, scale: s)
+                pivotY = Self.pivot(center: y.value, scale: s)
+                following = false
             }
             wasZoomed = focus != nil
             scale.step(toward: focus == nil ? 1 : level, omega: zoomSpeed, dt: dt)
+            let s = max(scale.value, 1)
+
+            if focus != nil, !following, level > 1, (s - 1) / (level - 1) > 0.98 { startFollowing() }
+            guard following else {
+                return ZoomState(scale: s, x: Self.center(pivot: pivotX, scale: s), y: Self.center(pivot: pivotY, scale: s))
+            }
+            if let c = cursor, let focus, t >= focus.t {
+                var tx = targetX, ty = targetY
+                if abs(c.x - tx) > deadZone { tx = c.x - deadZone * (c.x > tx ? 1 : -1) }
+                if abs(c.y - ty) > deadZone { ty = c.y - deadZone * (c.y > ty ? 1 : -1) }
+                aim(at: tx, ty)
+            }
             x.step(toward: targetX, omega: panSpeed, dt: dt)
             y.step(toward: targetY, omega: panSpeed, dt: dt)
-            // Keep the view on the screen at whatever zoom it's at right now.
-            let s = max(scale.value, 1)
+            // Keep the view on the screen.
             let half = 0.5 / s
             return ZoomState(scale: s, x: min(max(x.value, half), 1 - half), y: min(max(y.value, half), 1 - half))
+        }
+
+        /// Hands over from zooming about the pivot to panning, starting still, right where the zoom left the view.
+        private mutating func startFollowing() {
+            let s = max(scale.value, 1)
+            x = Spring(value: Self.center(pivot: pivotX, scale: s))
+            y = Spring(value: Self.center(pivot: pivotY, scale: s))
+            targetX = x.value
+            targetY = y.value
+            following = true
+        }
+
+        /// The view's centre when zoomed `scale` times about `pivot`, which stays at the same spot on screen.
+        /// It always keeps the view on the screen, for a pivot anywhere on it.
+        static func center(pivot: Double, scale: Double) -> Double {
+            pivot - (pivot - 0.5) / scale
+        }
+
+        /// The pivot that gives this centre at this zoom.
+        static func pivot(center: Double, scale: Double) -> Double {
+            guard scale > 1.0001 else { return 0.5 }
+            return min(max((center - 0.5 / scale) / (1 - 1 / scale), 0), 1)
         }
 
         private mutating func aim(at x: Double, _ y: Double) {
