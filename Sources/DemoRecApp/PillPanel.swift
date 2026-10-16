@@ -42,6 +42,14 @@ final class PillPanel {
     func setZoomed(_ zoomedIn: Bool) {
         zoomMarks.count += 1
         zoomMarks.zoomedIn = zoomedIn
+        // The "Zoomed in" badge is wider than the idle icon; regrow the pill around its top centre.
+        DispatchQueue.main.async { [weak self] in
+            guard let panel = self?.panel, let host = panel.contentView else { return }
+            let size = host.fittingSize
+            let old = panel.frame
+            panel.setFrame(NSRect(x: old.midX - size.width / 2, y: old.maxY - size.height, width: size.width, height: size.height),
+                           display: true, animate: false)
+        }
     }
 }
 
@@ -67,13 +75,8 @@ private struct RecordingPill: View {
                 Text(elapsed(ctx.date)).font(.system(size: 15, weight: .medium)).monospacedDigit()
             }
             if let zoomHint {
-                HStack(spacing: 4) {
-                    Image(systemName: marks.zoomedIn ? "minus.magnifyingglass" : "plus.magnifyingglass")
-                        .symbolEffect(.bounce, value: marks.count)
-                        .foregroundStyle(marks.zoomedIn ? Color.accentColor : .secondary)
-                    Text(zoomHint).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
-                }
-                .help(marks.zoomedIn ? "Zoomed in. Press \(zoomHint) to zoom back out" : "Press \(zoomHint) to zoom in on the pointer")
+                ZoomIndicator(marks: marks)
+                    .help(marks.zoomedIn ? "Zoomed in. Press \(zoomHint) to zoom back out" : "Not zoomed. Press \(zoomHint) to zoom in on the pointer")
             }
             PreviewToggle(preview: LivePreview.shared)
             Button(action: discard) {
@@ -115,5 +118,33 @@ private struct PreviewToggle: View {
         .buttonStyle(.borderless)
         .help(preview.enabled ? "Hide the live preview" : "Show a live preview of the video")
         .accessibilityLabel(preview.enabled ? "Hide live preview" : "Show live preview")
+    }
+}
+
+/// Zoom state at a glance: a faint magnifier when you're not zoomed, a bright "Zoomed in" badge when you are,
+/// so you don't forget to zoom back out.
+private struct ZoomIndicator: View {
+    let marks: ZoomMarks
+
+    var body: some View {
+        Group {
+            if marks.zoomedIn {
+                Label("Zoomed in", systemImage: "plus.magnifyingglass")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(Color.yellow, in: Capsule())
+                    .symbolEffect(.pulse, options: .repeating)
+                    .transition(.scale.combined(with: .opacity))
+            } else {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.tertiary)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.spring(duration: 0.25), value: marks.zoomedIn)
+        .accessibilityLabel(marks.zoomedIn ? "Zoomed in" : "Not zoomed")
     }
 }
