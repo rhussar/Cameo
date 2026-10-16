@@ -105,6 +105,7 @@ private struct BottomBar: View {
     }
 
     @ViewBuilder private var primary: some View {
+        RecordingsMenu(model: model)
         if case .countdown = model.phase {
             PrimaryButton(title: "Cancel", systemImage: nil, tint: .secondary, wide: wide, action: model.cancelCountdown)
                 .keyboardShortcut(.cancelAction)
@@ -128,10 +129,43 @@ private struct BottomBar: View {
         HStack(spacing: 10) {
             Button("Record another", action: model.reset).buttonStyle(.link)
             Spacer()
+            RecordingsMenu(model: model)
+            Button(action: model.deleteFinished) {
+                Image(systemName: "trash")
+            }
+            .controlSize(.large)
+            .help("Delete this video")
             PrimaryButton(title: "Show in Finder", systemImage: "folder", tint: .secondary, wide: wide, action: model.revealInFinder)
             PrimaryButton(title: "Play", systemImage: "play.fill", tint: .accentColor, wide: wide, action: model.play)
                 .keyboardShortcut(.defaultAction)
         }
+    }
+}
+
+/// Past recordings: pick one to show it in Finder, or open the whole folder.
+private struct RecordingsMenu: View {
+    @Bindable var model: RecorderModel
+
+    var body: some View {
+        Menu {
+            if model.recordings.isEmpty {
+                Text("No recordings yet")
+            } else {
+                Section("Recent") {
+                    ForEach(model.recordings.prefix(15)) { recording in
+                        Button(recording.date.formatted(date: .abbreviated, time: .shortened)) { model.reveal(recording) }
+                    }
+                }
+            }
+            Divider()
+            Button("Open Recordings Folder", action: model.openRecordingsFolder)
+        } label: {
+            Image(systemName: "clock.arrow.circlepath")
+        }
+        .menuStyle(.button)
+        .fixedSize()
+        .help("Your recordings: show one in Finder")
+        .onAppear(perform: model.loadRecordings)
     }
 }
 

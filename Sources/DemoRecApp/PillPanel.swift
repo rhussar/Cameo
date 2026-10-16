@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// The small floating "● 0:42  Stop" control shown while recording, at the top of the recorded screen.
+/// The small floating "● 0:42  🗑  Stop" control shown while recording, at the top of the recorded screen.
 /// It's hidden from screen capture, and the main window is tucked away while it's up.
 @MainActor
 final class PillPanel {
@@ -9,10 +9,10 @@ final class PillPanel {
     private let zoomMarks = ZoomMarks()
 
     /// `zoomHint` is the zoom shortcut to show, if it could be registered.
-    func show(since: Date, on screen: NSScreen?, zoomHint: String?, stop: @escaping () -> Void) {
+    func show(since: Date, on screen: NSScreen?, zoomHint: String?, discard: @escaping () -> Void, stop: @escaping () -> Void) {
         hide()
         zoomMarks.count = 0
-        let host = NSHostingView(rootView: RecordingPill(since: since, zoomHint: zoomHint, marks: zoomMarks, stop: stop))
+        let host = NSHostingView(rootView: RecordingPill(since: since, zoomHint: zoomHint, marks: zoomMarks, discard: discard, stop: stop))
         let size = host.fittingSize
         let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -51,6 +51,7 @@ private struct RecordingPill: View {
     let since: Date
     let zoomHint: String?
     let marks: ZoomMarks
+    let discard: () -> Void
     let stop: () -> Void
 
     var body: some View {
@@ -70,6 +71,11 @@ private struct RecordingPill: View {
                 }
                 .help("Press \(zoomHint) to zoom in on the pointer here")
             }
+            Button(action: discard) {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .help("Delete this recording without saving")
             Button(action: stop) {
                 Label("Stop", systemImage: "stop.fill").font(.system(size: 13, weight: .semibold))
             }

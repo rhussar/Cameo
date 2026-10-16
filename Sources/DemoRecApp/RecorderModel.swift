@@ -21,6 +21,8 @@ final class RecorderModel {
     var previewImage: CGImage?
     var cameraDenied = false
     var thumbnail: CGImage?
+    /// Past recordings, newest first.
+    var recordings: [Recording] = []
     var previewHovering = false
     var lookOpen = false
     /// Window content width, so controls can grow with a bigger window.
@@ -489,7 +491,7 @@ final class RecorderModel {
             let since = Date()
             phase = .recording(since: since)
             pill.show(since: since, on: recordedScreen(), zoomHint: zoomHotKey == nil ? nil : HotKey.zoomLabel,
-                      stop: { [weak self] in self?.stop() })
+                      discard: { [weak self] in self?.discard() }, stop: { [weak self] in self?.stop() })
             mainWindow?.orderOut(nil)
         } catch is CancellationError {
             phase = .idle
@@ -537,6 +539,7 @@ final class RecorderModel {
                                          outputURL: out)
                 thumbnail = await Self.thumbnail(for: out)
                 phase = .done(out)
+                loadRecordings()
                 NSApp.requestUserAttention(.informationalRequest)
             } catch {
                 phase = .failed(message(for: error), needsSettings: false)
@@ -550,6 +553,80 @@ final class RecorderModel {
         phase = .idle
         thumbnail = nil
         startPreviews()
+    }
+
+    /// Stops the recording without making the video and moves its files to the Trash, after asking.
+    func discard() {
+        guard case .recording = phase else { return }
+        NSApp.activate()
+        guard Self.confirmDelete("Delete this recording?", detail: "It won't be saved. Its files go to the Trash.",
+                                 keep: "Keep Recording") else { return }
+        // Bring the window back before the pill goes, so the app never has zero windows up.
+        mainWindow?.makeKeyAndOrderFront(nil)
+        pill.hide()
+        _ = cursor?.stop()
+        cursor = nil
+        let screen = screen, camera = camera, dir = sessionDir
+        task = Task {
+            try? await screen?.stop()
+            try? await camera?.stop()
+            self.screen = nil
+            self.camera = nil
+            self.sessionDir = nil
+            if let dir { Self.trash(dir) }
+            phase = .idle
+            startPreviews()
+        }
+    }
+
+    /// Moves the finished video and its source files to the Trash, after asking.
+    func deleteFinished() {
+        guard case .done(let url) = phase else { return }
+        guard Self.confirmDelete("Delete this video?", detail: "The video and its recording files go to the Trash.",
+                                 keep: "Cancel") else { return }
+        Self.trash(url.deletingLastPathComponent())
+        loadRecordings()
+        reset()
+    }
+
+    private static func confirmDelete(_ title: String, detail: String, keep: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = detail
+        alert.addButton(withTitle: "Delete").hasDestructiveAction = true
+        alert.addButton(withTitle: keep).keyEquivalent = "\u{1b}"
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    /// Trashes a session folder; refuses anything outside the recordings folder.
+    private static func trash(_ folder: URL) {
+        let base = Session.defaultBase.standardizedFileURL.path + "/"
+        guard folder.standardizedFileURL.path.hasPrefix(base) else { return }
+        try? FileManager.default.trashItem(at: folder, resultingItemURL: nil)
+    }
+
+    // MARK: History
+
+    func loadRecordings() {
+        let fm = FileManager.default
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let folders = (try? fm.contentsOfDirectory(at: Session.defaultBase, includingPropertiesForKeys: nil)) ?? []
+        recordings = folders.compactMap { folder in
+            guard let date = fmt.date(from: folder.lastPathComponent) else { return nil }
+            let recording = Recording(folder: folder, date: date)
+            return fm.fileExists(atPath: recording.video.path) ? recording : nil
+        }
+        .sorted { $0.date > $1.date }
+    }
+
+    func reveal(_ recording: Recording) {
+        NSWorkspace.shared.activateFileViewerSelecting([recording.video])
+    }
+
+    func openRecordingsFolder() {
+        try? FileManager.default.createDirectory(at: Session.defaultBase, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(Session.defaultBase)
     }
 
     func play() {
@@ -616,6 +693,14 @@ final class RecorderModel {
         gen.maximumSize = CGSize(width: 800, height: 800)
         return try? await gen.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image
     }
+}
+
+/// A finished recording: its session folder and the video in it.
+struct Recording: Hashable, Identifiable {
+    let folder: URL
+    let date: Date
+    var video: URL { folder.appendingPathComponent("final.mp4") }
+    var id: URL { folder }
 }
 
 /// One thing you can record: a screen or a window.
