@@ -92,6 +92,11 @@ private struct BottomBar: View {
         if model.styled {
             TiltSlider(tilt: $model.tilt, width: wide ? 130 : 90)
         }
+        Toggle(isOn: $model.autoZoom) {
+            Image(systemName: "plus.magnifyingglass")
+        }
+        .toggleStyle(.button)
+        .help("Auto-zoom: zoom in where you click or pause. Press \(HotKey.zoomLabel) while recording to zoom anywhere.")
     }
 
     @ViewBuilder private var primary: some View {

@@ -59,8 +59,10 @@ public final class Compositor {
 
     /// Builds the frame: the screen (flat, or staged as a card over a blurred backdrop) with the cutout in its corner.
     /// With a canvas of a different shape, the screen is fitted inside it over a blurred copy of itself.
-    public func compose(screen: CIImage, cutout: CIImage?) -> CIImage {
-        let screen = screen.transformed(by: CGAffineTransform(translationX: -screen.extent.minX, y: -screen.extent.minY))
+    /// `zoom` zooms the screen only; you stay the same size.
+    public func compose(screen: CIImage, cutout: CIImage?, zoom: ZoomState = .none) -> CIImage {
+        var screen = screen.transformed(by: CGAffineTransform(translationX: -screen.extent.minX, y: -screen.extent.minY))
+        screen = zoomed(screen, zoom)
         let frame = CGRect(origin: .zero, size: layout.canvas ?? screen.extent.size)
         let base: CIImage
         if let stage = layout.stage {
@@ -72,6 +74,18 @@ public final class Compositor {
         }
         guard let cutout else { return base }
         return place(cutout: cutout, over: base)
+    }
+
+    /// The part of the screen in view, scaled up to fill the screen's own size.
+    private func zoomed(_ screen: CIImage, _ zoom: ZoomState) -> CIImage {
+        guard zoom.scale > 1.001 else { return screen }
+        let W = screen.extent.width
+        let H = screen.extent.height
+        // Zoom y is top-down; CoreImage's is bottom-up.
+        let t = CGAffineTransform(translationX: W / 2, y: H / 2)
+            .scaledBy(x: zoom.scale, y: zoom.scale)
+            .translatedBy(x: -zoom.x * W, y: -(1 - zoom.y) * H)
+        return screen.clampedToExtent().transformed(by: t).cropped(to: screen.extent)
     }
 
     /// Brightness/contrast/saturation and warmth from `layout.look`.

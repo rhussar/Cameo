@@ -55,14 +55,19 @@ struct Record: AsyncParsableCommand {
         let screen = ScreenRecorder(url: dir.appendingPathComponent("screen.mov"), fps: fps, startTime: t0)
         try cam.start(cameraName: camera)
         try await screen.start(displayID: display.map { CGDirectDisplayID($0) })
+        let cursor = CursorRecorder(startTime: t0, target: display.map { .display(CGDirectDisplayID($0)) })
+        cursor.start()
         print("screen: \(Int(screen.pixelSize.width))x\(Int(screen.pixelSize.height)) px")
         print("\nRecording to \(dir.path)\nPress Ctrl-C to stop.\n")
 
         await waitForInterrupt()
 
         print("\nStopping…")
+        let track = cursor.stop()
         try await screen.stop()
         try await cam.stop()
+        try track.save(to: dir)
+        print("cursor: \(track.samples.count) samples, \(track.clicks.count) clicks")
         print("screen frames: \(screen.frameCount), camera frames: \(cam.frameCount)")
         print("Done. Next:\n  demorec composite \"\(dir.path)\"")
     }
@@ -83,6 +88,9 @@ struct Composite: AsyncParsableCommand {
     @Option(name: .customLong("output-height"), help: "Downscale the output to this height (keeps aspect). Default: native screen size.") var outputHeight: Int?
     @Option(help: "Output file. Default: final.mp4 in the session folder.") var output: String?
     @Option(help: "Frame size preset: \(OutputFormat.allCases.map(\.rawValue).joined(separator: ", ")).") var format: OutputFormat = .original
+    @Flag(name: .customLong("no-auto-zoom"), help: "Don't zoom in on clicks and pauses (spots marked with the hotkey still zoom).") var noAutoZoom = false
+    @Flag(name: .customLong("no-zoom"), help: "Never zoom, ignoring cursor.json.") var noZoom = false
+    @Option(name: .customLong("zoom-level"), help: "How far zooms go in, e.g. 2 = twice as close.") var zoomLevel: Double = ZoomSettings().level
     @Option(help: "Look preset for you: \(Look.presets.map { $0.name.lowercased() }.joined(separator: ", ")).") var look: String = "natural"
 
     @Flag(help: "Flat layout: full-frame screen with no backdrop, card or tilt.") var flat = false
@@ -121,7 +129,9 @@ struct Composite: AsyncParsableCommand {
             stage.shadowOpacity = shadow
             layout.stage = stage
         }
-        let transcoder = Transcoder(layout: layout, fps: fps, outputHeight: outputHeight, quality: quality, maskEnabled: !noMask)
+        let cursor = noZoom ? nil : CursorTrack.load(from: dir)
+        let transcoder = Transcoder(layout: layout, fps: fps, outputHeight: outputHeight, quality: quality, maskEnabled: !noMask,
+                                    cursor: cursor, zoom: ZoomSettings(auto: !noAutoZoom, level: zoomLevel))
         try await transcoder.run(screenURL: screenURL, cameraURL: cameraURL, outputURL: outURL)
         print("Wrote \(outURL.path)")
     }

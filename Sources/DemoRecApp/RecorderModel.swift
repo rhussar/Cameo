@@ -99,6 +99,10 @@ final class RecorderModel {
             updateScreenPreviewLayout()
         }
     }
+    /// Zoom in on clicks and pauses. The zoom hotkey works either way.
+    var autoZoom: Bool {
+        didSet { UserDefaults.standard.set(autoZoom, forKey: "autoZoom") }
+    }
     /// Card tilt in degrees when styled; positive brings the left edge closer.
     var tilt: Double {
         didSet {
@@ -161,6 +165,8 @@ final class RecorderModel {
     private var task: Task<Void, Never>?
     private var screen: ScreenRecorder?
     private var camera: CameraRecorder?
+    private var cursor: CursorRecorder?
+    private var zoomHotKey: HotKey?
     private var sessionDir: URL?
     private let fps = 30
 
@@ -172,6 +178,7 @@ final class RecorderModel {
         mirror = d.bool(forKey: "mirror")
         styled = d.bool(forKey: "styled")
         tilt = d.object(forKey: "tilt") as? Double ?? Stage().tilt
+        autoZoom = d.object(forKey: "autoZoom") as? Bool ?? true
         cameraID = d.string(forKey: "cameraID")
         microphoneID = d.string(forKey: "microphoneID")
         format = d.string(forKey: "format").flatMap(OutputFormat.init(rawValue:)) ?? .original
@@ -344,12 +351,21 @@ final class RecorderModel {
             camera = cam
             try cam.start(cameraName: selectedCamera?.localizedName, cameraID: selectedCamera?.uniqueID,
                           microphoneID: selectedMicrophone?.uniqueID)
-            try await scr.start(target: target ?? currentDisplayID().map { .display($0) }, excludingCurrentApp: true)
+            let recorded = target ?? currentDisplayID().map { .display($0) }
+            try await scr.start(target: recorded, excludingCurrentApp: true)
             screen = scr
             sessionDir = dir
+            let cur = CursorRecorder(startTime: t0, target: recorded)
+            cur.start()
+            cursor = cur
+            zoomHotKey = HotKey.zoom { [weak self] in
+                self?.cursor?.mark()
+                self?.pill.flashZoom()
+            }
             let since = Date()
             phase = .recording(since: since)
-            pill.show(since: since, on: recordedScreen(), stop: { [weak self] in self?.stop() })
+            pill.show(since: since, on: recordedScreen(), zoomHint: zoomHotKey == nil ? nil : HotKey.zoomLabel,
+                      stop: { [weak self] in self?.stop() })
             mainWindow?.orderOut(nil)
         } catch is CancellationError {
             phase = .idle
@@ -366,6 +382,11 @@ final class RecorderModel {
         guard case .recording = phase, let screen, let camera, let sessionDir else { return }
         phase = .processing(0)
         pill.hide()
+        zoomHotKey?.unregister()
+        zoomHotKey = nil
+        let track = cursor?.stop()
+        cursor = nil
+        let zoom = ZoomSettings(auto: autoZoom)
         mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate()
         // Same margin the setup preview draws.
@@ -379,7 +400,8 @@ final class RecorderModel {
             do {
                 try await screen.stop()
                 try await camera.stop()
-                let transcoder = Transcoder(layout: layout, fps: fps, outputHeight: nil, quality: .balanced)
+                try? track?.save(to: sessionDir)
+                let transcoder = Transcoder(layout: layout, fps: fps, outputHeight: nil, quality: .balanced, cursor: track, zoom: zoom)
                 transcoder.onProgress = { p in
                     Task { @MainActor in
                         if case .processing = self.phase { self.phase = .processing(p) }

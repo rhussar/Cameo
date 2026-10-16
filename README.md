@@ -23,6 +23,12 @@ LinkedIn 1080p (16:9), square (1:1) or portrait (4:5). When your screen is a dif
 presets (Natural, Bright, Warm, Cool, Vivid, Mono) and brightness / contrast / colour / warmth
 sliders for you; the preview updates live. The CLI takes the same as `--format` and `--look`.
 
+**Auto-zoom** (the magnifier button, on by default) zooms the screen in where you click and where
+the pointer comes to rest after moving somewhere new, follows the pointer while zoomed, and zooms
+back out when things go quiet. Moments close together become one zoom that pans. Whether it's on
+or off, press **⌃⌥Z** while recording to zoom in on wherever the pointer is; the magnifier in the
+stop pill bounces to confirm. Only the screen zooms, not you.
+
 ## Build (CLI)
 
 ```bash
@@ -52,7 +58,8 @@ open ~/Movies/DemoRec/<timestamp>/final.mp4
 
 `record` writes `screen.mov` (native Retina pixels, HEVC) and `camera.mov` (1080p H.264 +
 AAC mic) into a timestamped folder. Both writers start from the same host-clock timestamp,
-so the files line up at t = 0 without any manual offset.
+so the files line up at t = 0 without any manual offset. It also writes `cursor.json`: the pointer
+position (~60 times a second) and clicks, on the same clock, which `composite` uses for zooming.
 
 `composite` cuts you out of every camera frame with Vision's person segmentation, places
 the cutout over the screen frame, and writes `final.mp4` with the mic audio passed through.
@@ -79,6 +86,9 @@ the cutout over the screen frame, and writes `final.mp4` with the mic audio pass
 | `--output-height` | native | downscale output, e.g. `1440` for a 5K display |
 | `--no-mask` | off | overlay the whole camera frame (debugging / picture-in-picture) |
 | `--output <file>` | `final.mp4` in the session folder | output path |
+| `--zoom-level` | `1.8` | how far zooms go in |
+| `--no-auto-zoom` | off | don't zoom on clicks and pauses (⌃⌥Z marks from the app still zoom) |
+| `--no-zoom` | off | never zoom, ignoring `cursor.json` |
 
 By default the screen is staged like the reference video: a rounded, slightly tilted card with a
 drop shadow, floating over a zoomed and blurred copy of the same screen content. Fractions are

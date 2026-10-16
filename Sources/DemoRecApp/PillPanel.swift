@@ -6,10 +6,13 @@ import SwiftUI
 @MainActor
 final class PillPanel {
     private var panel: NSPanel?
+    private let zoomMarks = ZoomMarks()
 
-    func show(since: Date, on screen: NSScreen?, stop: @escaping () -> Void) {
+    /// `zoomHint` is the zoom shortcut to show, if it could be registered.
+    func show(since: Date, on screen: NSScreen?, zoomHint: String?, stop: @escaping () -> Void) {
         hide()
-        let host = NSHostingView(rootView: RecordingPill(since: since, stop: stop))
+        zoomMarks.count = 0
+        let host = NSHostingView(rootView: RecordingPill(since: since, zoomHint: zoomHint, marks: zoomMarks, stop: stop))
         let size = host.fittingSize
         let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -32,10 +35,22 @@ final class PillPanel {
         panel?.orderOut(nil)
         panel = nil
     }
+
+    /// Acknowledges the zoom shortcut with a bounce, so you know the spot was marked.
+    func flashZoom() {
+        zoomMarks.count += 1
+    }
+}
+
+@MainActor @Observable
+private final class ZoomMarks {
+    var count = 0
 }
 
 private struct RecordingPill: View {
     let since: Date
+    let zoomHint: String?
+    let marks: ZoomMarks
     let stop: () -> Void
 
     var body: some View {
@@ -45,6 +60,15 @@ private struct RecordingPill: View {
                 .symbolEffect(.pulse)
             TimelineView(.periodic(from: since, by: 1)) { ctx in
                 Text(elapsed(ctx.date)).font(.system(size: 15, weight: .medium)).monospacedDigit()
+            }
+            if let zoomHint {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus.magnifyingglass")
+                        .symbolEffect(.bounce, value: marks.count)
+                        .foregroundStyle(marks.count > 0 ? Color.accentColor : .secondary)
+                    Text(zoomHint).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                }
+                .help("Press \(zoomHint) to zoom in on the pointer here")
             }
             Button(action: stop) {
                 Label("Stop", systemImage: "stop.fill").font(.system(size: 13, weight: .semibold))
