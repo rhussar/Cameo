@@ -34,6 +34,9 @@ public struct Layout: Sendable {
     /// (anything past the edge is cropped). y: 0 = flush with the bottom, 1 = flush with the top, so a flush
     /// bottom stays flush when the size changes.
     public var position: CGPoint? = nil
+    /// The part of the screen recording to show, as fractions of it with a top-left origin (like CursorTrack).
+    /// nil = all of it. Applied before zoom, staging and fitting, so everything else treats the crop as the screen.
+    public var crop: CGRect? = nil
 
     public init(corner: Corner = .bottomRight, scale: Double = 0.35, margin: Double = 24, feather: Double = 2, mirror: Bool = false) {
         self.corner = corner
@@ -41,6 +44,19 @@ public struct Layout: Sendable {
         self.margin = margin
         self.feather = feather
         self.mirror = mirror
+    }
+}
+
+extension Layout {
+    /// The crop in pixels of a `size` screen, CoreImage's bottom-left origin, whole and even-sized
+    /// so the video encoder takes it as is. The whole screen when there's no crop.
+    public func cropRect(in size: CGSize) -> CGRect {
+        let full = CGRect(origin: .zero, size: size)
+        guard let c = crop?.intersection(CGRect(x: 0, y: 0, width: 1, height: 1)), !c.isEmpty else { return full }
+        let w = max(2, (c.width * size.width).rounded()), h = max(2, (c.height * size.height).rounded())
+        let x = (c.minX * size.width).rounded(), y = ((1 - c.maxY) * size.height).rounded()
+        let r = CGRect(x: x, y: y, width: CGFloat(Int(w) & ~1), height: CGFloat(Int(h) & ~1))
+        return r.intersection(full)
     }
 }
 

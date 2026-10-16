@@ -23,6 +23,12 @@ LinkedIn 1080p (16:9), square (1:1) or portrait (4:5). When your screen is a dif
 presets (Natural, Bright, Warm, Cool, Vivid, Mono) and brightness / contrast / colour / warmth
 sliders for you; the preview updates live. The CLI takes the same as `--format` and `--look`.
 
+**Crop** (the crop button next to the screen picker) shows only part of what you record, handy on a big
+or ultrawide monitor. The preview switches to the whole screen with a box over it: drag the box to move it
+(it snaps to the edges and the middle), drag a corner to resize it, then **Done**. With a fixed video shape
+(e.g. YouTube 16:9) the box keeps that shape so the crop fills the video; with Original size the video takes
+the box's shape. Each screen remembers its own crop; **Whole Screen** clears it. Zoom works inside the crop.
+
 **Auto-zoom** (the magnifier button, on by default) zooms the screen in where you click and where
 the pointer comes to rest after moving somewhere new, follows the pointer while zoomed, and zooms
 back out when things go quiet. Moments close together become one zoom that pans. Whether it's on
@@ -85,6 +91,7 @@ the cutout over the screen frame, and writes `final.mp4` with the mic audio pass
 | `--quality` | `accurate` | segmentation quality: `fast`, `balanced`, `accurate` |
 | `--output-height` | native | downscale output, e.g. `1440` for a 5K display |
 | `--no-mask` | off | overlay the whole camera frame (debugging / picture-in-picture) |
+| `--crop <x,y,w,h>` | whole screen | show only part of the screen, as fractions from the top-left, e.g. `0.25,0,0.5,1` |
 | `--output <file>` | `final.mp4` in the session folder | output path |
 | `--zoom-level` | `1.8` | how far zooms go in |
 | `--no-auto-zoom` | off | don't zoom on clicks and pauses (⌃⌥Z marks from the app still zoom) |

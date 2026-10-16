@@ -70,6 +70,11 @@ private struct BottomBar: View {
     /// What you're recording, what shape the video is, and which camera.
     @ViewBuilder private var sources: some View {
         SourcePicker(model: model)
+        Toggle(isOn: $model.cropping) {
+            Image(systemName: "crop")
+        }
+        .toggleStyle(.button)
+        .help(model.crop == nil ? "Crop: show only part of the screen" : "Crop: change which part of the screen is shown")
         FormatPicker(model: model)
         CameraPicker(model: model)
         MicrophonePicker(model: model)
@@ -375,20 +380,10 @@ private struct Preview: View {
                         .font(.system(size: 44, weight: .light)).foregroundStyle(.white.opacity(0.8))
                         .symbolEffect(.pulse)
                 default:
-                    if hovering, model.dragOrigin == nil { cornerTargets(in: geo.size) }
-                    if model.snappedToMiddle {
-                        Path { p in
-                            p.move(to: CGPoint(x: geo.size.width / 2, y: 0))
-                            p.addLine(to: CGPoint(x: geo.size.width / 2, y: geo.size.height))
-                        }
-                        .stroke(.yellow.opacity(0.8), style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
-                    }
-                    presenter(in: geo.size)
-                    if case .countdown(let n) = model.phase {
-                        Text("\(n)")
-                            .font(.system(size: 120, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white).shadow(radius: 12)
-                            .contentTransition(.numericText(countsDown: true))
+                    if model.cropping {
+                        CropBox(model: model, size: geo.size)
+                    } else {
+                        setupOverlay(in: geo.size)
                     }
                 }
             }
@@ -397,7 +392,7 @@ private struct Preview: View {
             .contentShape(Rectangle())
             .onHover { model.previewHovering = $0 }
             .onTapGesture { loc in
-                guard model.isSetup else { return }
+                guard model.isSetup, !model.cropping else { return }
                 let left = loc.x < geo.size.width / 2
                 let top = loc.y < geo.size.height / 2
                 withAnimation(.spring(duration: 0.35)) {
@@ -410,17 +405,39 @@ private struct Preview: View {
         .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
         .overlay(alignment: .top) {
             if model.isSetup {
-                Text("Drag yourself anywhere · click a corner to snap there")
+                Text(model.cropping ? "Drag the box to move it · drag a corner to resize it" : "Drag yourself anywhere · click a corner to snap there")
                     .font(.caption.weight(.medium)).foregroundStyle(.white)
                     .padding(.horizontal, 10).padding(.vertical, 5)
                     .background(.black.opacity(0.5), in: Capsule())
                     .padding(.top, 10)
-                    .opacity(hovering ? 1 : 0)
+                    .opacity(hovering || model.cropping ? 1 : 0)
                     .allowsHitTesting(false)
             }
         }
+        .overlay(alignment: .bottom) {
+            if model.cropping { CropControls(model: model).padding(.bottom, 12) }
+        }
         .animation(.easeOut(duration: 0.2), value: hovering)
         .animation(.spring(duration: 0.3), value: model.phase)
+    }
+
+    /// You, the corner targets and the middle guide, plus the countdown.
+    @ViewBuilder private func setupOverlay(in size: CGSize) -> some View {
+        if hovering, model.dragOrigin == nil { cornerTargets(in: size) }
+        if model.snappedToMiddle {
+            Path { p in
+                p.move(to: CGPoint(x: size.width / 2, y: 0))
+                p.addLine(to: CGPoint(x: size.width / 2, y: size.height))
+            }
+            .stroke(.yellow.opacity(0.8), style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
+        }
+        presenter(in: size)
+        if case .countdown(let n) = model.phase {
+            Text("\(n)")
+                .font(.system(size: 120, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white).shadow(radius: 12)
+                .contentTransition(.numericText(countsDown: true))
+        }
     }
 
     @ViewBuilder private func background(in size: CGSize) -> some View {
@@ -526,6 +543,133 @@ private struct Preview: View {
         case .topRight: CGPoint(x: size.width - margin - w / 2, y: margin + h / 2)
         case .topLeft: CGPoint(x: margin + w / 2, y: margin + h / 2)
         }
+    }
+}
+
+// MARK: - Crop
+
+/// The crop box over the whole screen: drag inside it to move it, drag a corner to resize it.
+/// When the video has a fixed shape (say YouTube 16:9) the box keeps that shape, so the crop fills the video exactly.
+private struct CropBox: View {
+    @Bindable var model: RecorderModel
+    let size: CGSize
+
+    private static let corners: [(sx: CGFloat, sy: CGFloat, resize: FrameResizePosition)] = [
+        (0, 0, .topLeading), (1, 0, .topTrailing), (0, 1, .bottomLeading), (1, 1, .bottomTrailing),
+    ]
+
+    var body: some View {
+        let c = model.crop ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+        let box = CGRect(x: c.minX * size.width, y: c.minY * size.height, width: c.width * size.width, height: c.height * size.height)
+        ZStack {
+            // Dim what's left out.
+            Path { p in
+                p.addRect(CGRect(origin: .zero, size: size))
+                p.addRect(box)
+            }
+            .fill(.black.opacity(0.6), style: FillStyle(eoFill: true))
+            .allowsHitTesting(false)
+            thirds(in: box)
+            Rectangle()
+                .strokeBorder(.white, lineWidth: 2)
+                .contentShape(Rectangle())
+                .frame(width: box.width, height: box.height)
+                .pointerStyle(.grabIdle)
+                .gesture(move(c))
+                .position(x: box.midX, y: box.midY)
+            ForEach(Self.corners.indices, id: \.self) { i in
+                let k = Self.corners[i]
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(.white)
+                    .frame(width: 12, height: 12)
+                    .shadow(color: .black.opacity(0.4), radius: 2)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+                    .pointerStyle(.frameResize(position: k.resize))
+                    .gesture(resize(c, sx: k.sx, sy: k.sy))
+                    .position(x: box.minX + k.sx * box.width, y: box.minY + k.sy * box.height)
+            }
+        }
+        .frame(width: size.width, height: size.height)
+    }
+
+    private func thirds(in box: CGRect) -> some View {
+        Path { p in
+            for f in [1.0 / 3, 2.0 / 3] {
+                p.move(to: CGPoint(x: box.minX + box.width * f, y: box.minY))
+                p.addLine(to: CGPoint(x: box.minX + box.width * f, y: box.maxY))
+                p.move(to: CGPoint(x: box.minX, y: box.minY + box.height * f))
+                p.addLine(to: CGPoint(x: box.maxX, y: box.minY + box.height * f))
+            }
+        }
+        .stroke(.white.opacity(0.3), lineWidth: 1)
+        .allowsHitTesting(false)
+    }
+
+    /// Slides the box, snapping to the screen's edges and centre.
+    private func move(_ current: CGRect) -> some Gesture {
+        // Window coordinates, like dragging yourself: the box moves under the pointer, so its own space would jitter.
+        DragGesture(minimumDistance: 1, coordinateSpace: .global)
+            .onChanged { g in
+                let s = model.cropDragStart ?? current
+                model.cropDragStart = s
+                func place(_ v: CGFloat, length: CGFloat) -> CGFloat {
+                    let v = min(max(v, 0), 1 - length), snap: CGFloat = 0.015
+                    if v < snap { return 0 }
+                    if v > 1 - length - snap { return 1 - length }
+                    if abs(v + length / 2 - 0.5) < snap { return 0.5 - length / 2 }
+                    return v
+                }
+                let x = place(s.minX + g.translation.width / size.width, length: s.width)
+                let y = place(s.minY + g.translation.height / size.height, length: s.height)
+                model.crop = CGRect(x: x, y: y, width: s.width, height: s.height)
+            }
+            .onEnded { _ in model.cropDragStart = nil }
+    }
+
+    /// Drags corner (sx, sy) (0 = left/top, 1 = right/bottom) with the opposite corner pinned.
+    private func resize(_ current: CGRect, sx: CGFloat, sy: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 1, coordinateSpace: .global)
+            .onChanged { g in
+                let s = model.cropDragStart ?? current
+                model.cropDragStart = s
+                let ax = sx == 0 ? s.maxX : s.minX, ay = sy == 0 ? s.maxY : s.minY
+                let px = (sx == 0 ? s.minX : s.maxX) + g.translation.width / size.width
+                let py = (sy == 0 ? s.minY : s.maxY) + g.translation.height / size.height
+                let roomX = sx == 0 ? ax : 1 - ax, roomY = sy == 0 ? ay : 1 - ay
+                let least: CGFloat = 0.08
+                var w = min(max(sx == 0 ? ax - px : px - ax, least), roomX)
+                var h = min(max(sy == 0 ? ay - py : py - ay, least), roomY)
+                if let k = model.cropRatio {
+                    // Follow the direction you're mostly dragging, keep the shape, then fit the room.
+                    if abs(g.translation.width) >= abs(g.translation.height) { h = w / k } else { w = h * k }
+                    if w < least { w = least; h = w / k }
+                    if h < least { h = least; w = h * k }
+                    if w > roomX { w = roomX; h = w / k }
+                    if h > roomY { h = roomY; w = h * k }
+                }
+                model.crop = CGRect(x: sx == 0 ? ax - w : ax, y: sy == 0 ? ay - h : ay, width: w, height: h)
+            }
+            .onEnded { _ in model.cropDragStart = nil }
+    }
+}
+
+private struct CropControls: View {
+    @Bindable var model: RecorderModel
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(model.cropRatio == nil ? "Any shape: the video takes the box's shape" : "Shaped to fill your \(model.format.name) video")
+                .font(.callout).foregroundStyle(.white.opacity(0.85))
+            Button("Whole Screen", action: model.clearCrop)
+            Button("Done") { model.cropping = false }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.cancelAction)
+        }
+        .controlSize(.regular)
+        .padding(.leading, 14).padding(.trailing, 8).padding(.vertical, 7)
+        .background(.black.opacity(0.6), in: Capsule())
+        .environment(\.colorScheme, .dark)
     }
 }
 

@@ -28,6 +28,19 @@ public struct CursorTrack: Codable, Sendable {
     public func save(to dir: URL) throws {
         try JSONEncoder().encode(self).write(to: dir.appendingPathComponent(Self.fileName))
     }
+
+    /// The same track in the coordinates of a crop of the recorded area (see Layout.crop).
+    /// Clicks and marks outside the crop are dropped, since there's nothing there to zoom in on.
+    public func cropped(to crop: CGRect) -> CursorTrack {
+        guard crop.width > 0, crop.height > 0 else { return self }
+        func map(_ p: Point) -> Point { Point(t: p.t, x: (p.x - crop.minX) / crop.width, y: (p.y - crop.minY) / crop.height) }
+        func inside(_ p: Point) -> Bool { (0...1).contains(p.x) && (0...1).contains(p.y) }
+        var out = CursorTrack()
+        out.samples = samples.map(map)
+        out.clicks = clicks.map(map).filter(inside)
+        out.marks = marks.map(map).filter(inside)
+        return out
+    }
 }
 
 /// Polls the pointer and mouse buttons while recording. Polling needs no extra privacy permission

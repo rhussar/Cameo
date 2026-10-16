@@ -91,6 +91,7 @@ struct Composite: AsyncParsableCommand {
     @Flag(name: .customLong("no-auto-zoom"), help: "Don't zoom in on clicks and pauses (spots marked with the hotkey still zoom).") var noAutoZoom = false
     @Flag(name: .customLong("no-zoom"), help: "Never zoom, ignoring cursor.json.") var noZoom = false
     @Option(name: .customLong("zoom-level"), help: "How far zooms go in, e.g. 2 = twice as close.") var zoomLevel: Double = ZoomSettings().level
+    @Option(help: "Show only part of the screen: x,y,width,height as fractions of it from the top-left, e.g. 0.25,0,0.5,1.") var crop: String?
     @Option(help: "Look preset for you: \(Look.presets.map { $0.name.lowercased() }.joined(separator: ", ")).") var look: String = "natural"
 
     @Flag(help: "Flat layout: full-frame screen with no backdrop, card or tilt.") var flat = false
@@ -117,6 +118,11 @@ struct Composite: AsyncParsableCommand {
             throw DemoRecError("unknown look \"\(look)\"")
         }
         layout.look = preset.look
+        if let crop {
+            let v = crop.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            guard v.count == 4, v[2] > 0, v[3] > 0 else { throw DemoRecError("--crop needs x,y,width,height, e.g. 0.25,0,0.5,1") }
+            layout.crop = CGRect(x: v[0], y: v[1], width: v[2], height: v[3])
+        }
         if !flat {
             var stage = Stage()
             stage.inset = inset

@@ -21,7 +21,8 @@ public final class Transcoder {
     public init(layout: Layout, fps: Int, outputHeight: Int?, quality: MaskQuality, maskEnabled: Bool = true,
                 cursor: CursorTrack? = nil, zoom: ZoomSettings = ZoomSettings()) {
         self.layout = layout
-        self.cursor = cursor
+        // Zoom works in the cropped screen's coordinates.
+        self.cursor = layout.crop.flatMap { cursor?.cropped(to: $0) } ?? cursor
         self.zoom = zoom
         self.maskEnabled = maskEnabled
         self.fps = fps
@@ -75,7 +76,9 @@ public final class Transcoder {
         guard let cameraTrack = try await cameraAsset.loadTracks(withMediaType: .video).first else { throw DemoRecError("camera.mov has no video track") }
         let audioTrack = try await cameraAsset.loadTracks(withMediaType: .audio).first
 
-        let screenSize = try await screenTrack.load(.naturalSize)
+        let recordedSize = try await screenTrack.load(.naturalSize)
+        // What the compositor treats as the screen: the crop, if there is one.
+        let screenSize = layout.cropRect(in: recordedSize).size
         let screenDuration = try await screenAsset.load(.duration)
         let cameraDuration = try await cameraAsset.load(.duration)
         let duration = CMTimeMaximum(screenDuration, cameraDuration)
@@ -180,7 +183,7 @@ public final class Transcoder {
             let zoomedFrames = zoomPath.filter { $0.scale > 1.01 }.count
             print(String(format: "zoom: %d moments, zoomed in for %.1f s", moments, Double(zoomedFrames) / Double(fps)))
         }
-        let black = CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: screenSize.width, height: screenSize.height))
+        let black = CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: recordedSize))
         let started = Date()
         var frameIndex = 0
 

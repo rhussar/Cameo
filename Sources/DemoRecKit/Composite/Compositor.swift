@@ -57,11 +57,15 @@ public final class Compositor {
         return (choke.outputImage ?? upsampled).applyingFilter("CIColorClamp")
     }
 
-    /// Builds the frame: the screen (flat, or staged as a card over a blurred backdrop) with the cutout in its corner.
+    /// Builds the frame: the screen (cropped, then flat, or staged as a card over a blurred backdrop) with the cutout in its corner.
     /// With a canvas of a different shape, the screen is fitted inside it over a blurred copy of itself.
     /// `zoom` zooms the screen only; you stay the same size.
     public func compose(screen: CIImage, cutout: CIImage?, zoom: ZoomState = .none) -> CIImage {
         var screen = screen.transformed(by: CGAffineTransform(translationX: -screen.extent.minX, y: -screen.extent.minY))
+        if layout.crop != nil {
+            let r = layout.cropRect(in: screen.extent.size)
+            screen = screen.cropped(to: r).transformed(by: CGAffineTransform(translationX: -r.minX, y: -r.minY))
+        }
         screen = zoomed(screen, zoom)
         let frame = CGRect(origin: .zero, size: layout.canvas ?? screen.extent.size)
         let base: CIImage

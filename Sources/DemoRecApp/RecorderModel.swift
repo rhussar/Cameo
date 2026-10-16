@@ -30,6 +30,8 @@ final class RecorderModel {
     var format: OutputFormat {
         didSet {
             UserDefaults.standard.set(format.rawValue, forKey: "format")
+            // A crop shaped like the old video would leave bars in the new one.
+            if let crop, let k = cropRatio { self.crop = Self.reshaped(crop, ratio: k) }
             updateScreenPreviewLayout()
         }
     }
@@ -46,7 +48,11 @@ final class RecorderModel {
     var target: CaptureTarget? {
         didSet {
             if case .display(let id) = target { UserDefaults.standard.set(Int(id), forKey: "displayID") }
-            if target != oldValue, isSetup { startScreenPreview() }
+            if target != oldValue {
+                cropping = false
+                updateScreenPreviewLayout() // each screen keeps its own crop
+                if isSetup { startScreenPreview() }
+            }
         }
     }
     var displaySources: [Source] = []
@@ -81,6 +87,8 @@ final class RecorderModel {
     }
     /// Drag state for the preview: your centre when the drag began, and whether you're snapped to the middle.
     var dragOrigin: CGPoint?
+    /// The crop when a drag of the crop box began.
+    var cropDragStart: CGRect?
     var snappedToMiddle = false
     /// Cutout height as a fraction of the screen height.
     var size: Double {
@@ -110,8 +118,71 @@ final class RecorderModel {
             updateScreenPreviewLayout()
         }
     }
+    /// The part of each screen or window that goes in the video (see Layout.crop), keyed by `cropKey`.
+    private var crops: [String: CGRect] {
+        didSet {
+            // Window IDs don't survive a relaunch, so only screens' crops are kept.
+            let saved = crops.filter { $0.key.hasPrefix("display-") }.mapValues { [$0.minX, $0.minY, $0.width, $0.height] }
+            UserDefaults.standard.set(saved, forKey: "crops")
+        }
+    }
+    /// The crop for what you're recording. nil = all of it.
+    var crop: CGRect? {
+        get { target.flatMap { crops[Self.cropKey($0)] } }
+        set {
+            guard let target else { return }
+            crops[Self.cropKey(target)] = newValue
+            if !cropping { updateScreenPreviewLayout() }
+        }
+    }
+    /// Editing the crop: the preview shows the whole screen with the crop box over it.
+    var cropping = false {
+        didSet {
+            guard cropping != oldValue else { return }
+            if cropping, crop == nil { crop = defaultCrop() }
+            // A box around (nearly) everything is no crop at all.
+            if !cropping, let c = crop, c.width > 0.995, c.height > 0.995 { crop = nil }
+            updateScreenPreviewLayout()
+        }
+    }
+    func clearCrop() {
+        crop = nil
+        cropping = false
+    }
+    /// Width / height of the crop box in fractions of the screen so the crop exactly fills the video's frame.
+    /// nil (any shape) when the video takes its shape from the crop.
+    var cropRatio: CGFloat? {
+        guard let out = format.size, let src = selectedSource?.size, src.width > 0, src.height > 0 else { return nil }
+        return (out.width / out.height) / (src.width / src.height)
+    }
+    private static func cropKey(_ target: CaptureTarget) -> String {
+        switch target {
+        case .display(let id): "display-\(id)"
+        case .window(let id): "window-\(id)"
+        }
+    }
+    /// The biggest box shaped like the video, or 80% of the screen when that's the whole screen anyway.
+    private func defaultCrop() -> CGRect {
+        var w: CGFloat = 1, h: CGFloat = 1
+        if let k = cropRatio { if k > 1 { h = 1 / k } else { w = k } }
+        if w * h > 0.95 { w *= 0.8; h *= 0.8 }
+        return CGRect(x: (1 - w) / 2, y: (1 - h) / 2, width: w, height: h)
+    }
+    /// `rect` reshaped to `ratio`, keeping its centre and about the same area, inside the screen.
+    static func reshaped(_ rect: CGRect, ratio k: CGFloat) -> CGRect {
+        var h = (rect.width * rect.height / k).squareRoot(), w = h * k
+        let over = max(w, h, 1)
+        w /= over; h /= over
+        let x = min(max(rect.midX - w / 2, 0), 1 - w), y = min(max(rect.midY - h / 2, 0), 1 - h)
+        return CGRect(x: x, y: y, width: w, height: h)
+    }
+
     private func updateScreenPreviewLayout() {
-        screenPreview.setLayout(stage: stage, canvas: format.size)
+        if cropping {
+            screenPreview.setLayout(stage: nil, canvas: nil, crop: nil)
+        } else {
+            screenPreview.setLayout(stage: stage, canvas: format.size, crop: crop)
+        }
     }
 
     private var stage: Stage? {
@@ -182,6 +253,9 @@ final class RecorderModel {
         cameraID = d.string(forKey: "cameraID")
         microphoneID = d.string(forKey: "microphoneID")
         format = d.string(forKey: "format").flatMap(OutputFormat.init(rawValue:)) ?? .original
+        crops = (d.dictionary(forKey: "crops") as? [String: [Double]] ?? [:]).compactMapValues { v in
+            v.count == 4 ? CGRect(x: v[0], y: v[1], width: v[2], height: v[3]) : nil
+        }
         look = d.data(forKey: "look").flatMap { try? JSONDecoder().decode(Look.self, from: $0) } ?? Look()
         preview.setMirror(mirror)
         preview.setLook(look)
@@ -323,6 +397,7 @@ final class RecorderModel {
     // MARK: Recording
 
     func record() {
+        cropping = false
         task = Task { await startRecording() }
     }
 
@@ -389,9 +464,11 @@ final class RecorderModel {
         let zoom = ZoomSettings(auto: autoZoom)
         mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate()
+        var layout = Layout(corner: corner, scale: size, mirror: mirror)
+        layout.crop = crop
         // Same margin the setup preview draws.
-        let frameHeight = format.size?.height ?? screen.pixelSize.height
-        var layout = Layout(corner: corner, scale: size, margin: Self.margin(for: corner) * frameHeight, mirror: mirror)
+        let frameHeight = format.size?.height ?? layout.cropRect(in: screen.pixelSize).height
+        layout.margin = Self.margin(for: corner) * frameHeight
         layout.stage = stage
         layout.canvas = format.size
         layout.look = look
@@ -447,7 +524,8 @@ final class RecorderModel {
     var screenAspect: CGFloat {
         if let img = screenImage { return CGFloat(img.width) / CGFloat(max(img.height, 1)) }
         let f = selectedSource?.size ?? (NSScreen.main?.frame.size ?? CGSize(width: 16, height: 10))
-        return f.width / max(f.height, 1)
+        let c = cropping ? nil : crop
+        return f.width * (c?.width ?? 1) / max(f.height * (c?.height ?? 1), 1)
     }
 
     // MARK: Helpers
