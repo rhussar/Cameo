@@ -479,7 +479,9 @@ private struct Preview: View {
 
     /// Moves you with the pointer, snapping flush to the sides, the middle, and the top and bottom edges.
     private func drag(w: CGFloat, h: CGFloat, center: CGPoint, in size: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 2)
+        // Measured in window coordinates: in the default local space the frame moves with you, so each move
+        // shifts the next reading and the cutout jitters back and forth.
+        DragGesture(minimumDistance: 2, coordinateSpace: .global)
             .onChanged { g in
                 guard model.isSetup else { return }
                 if model.dragOrigin == nil { model.dragOrigin = center }
