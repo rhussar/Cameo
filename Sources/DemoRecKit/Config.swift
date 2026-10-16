@@ -172,9 +172,41 @@ public enum OutputFormat: String, CaseIterable, Sendable {
     }
 }
 
-/// Timestamped session folders under ~/Movies/DemoRec.
+/// Where recordings go. The CLI keeps each recording's files in a timestamped folder under ~/Movies/DemoRec.
+/// The app keeps only the finished videos there, side by side, and does its recording in `workBase`.
 public enum Session {
     public static let defaultBase = URL(fileURLWithPath: NSString(string: "~/Movies/DemoRec").expandingTildeInPath)
+    /// The app's working folders (screen.mov, camera.mov, cursor.json) while it records and makes the video.
+    public static let workBase = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("DemoRec/Recordings")
+
+    private static let videoName: DateFormatter = {
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.dateFormat = "'DemoRec' yyyy-MM-dd 'at' HH.mm.ss"
+        return fmt
+    }()
+
+    /// A new video's file in `base`, named for when it was recorded like macOS's own screen recordings,
+    /// e.g. "DemoRec 2026-10-15 at 20.27.42.mp4". Never one that's already there.
+    public static func videoURL(recordedAt date: Date, in base: URL = defaultBase) throws -> URL {
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        let name = videoName.string(from: date)
+        var url = base.appendingPathComponent(name + ".mp4")
+        var n = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            url = base.appendingPathComponent("\(name) \(n).mp4")
+            n += 1
+        }
+        return url
+    }
+
+    /// When a video named by `videoURL` was recorded.
+    public static func recordedAt(video: URL) -> Date? {
+        let name = video.deletingPathExtension().lastPathComponent
+        // "… at 20.27.42 2" was the second video that second.
+        return videoName.date(from: name) ?? name.lastIndex(of: " ").flatMap { videoName.date(from: String(name[..<$0])) }
+    }
 
     public static func makeFolder(in base: URL = defaultBase) throws -> URL {
         let fmt = DateFormatter()

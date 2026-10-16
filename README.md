@@ -14,8 +14,11 @@ scripts/build-app.sh
 This installs `~/Applications/DemoRec.app`. Open it, click a corner of the preview to choose
 where you appear, drag the slider to set your size, and hit **Start Recording**. After a
 3-second countdown the window shrinks to a small floating pill (hidden from the recording).
-Click **Stop** and the app makes `final.mp4`, then offers **Play** and **Show in Finder**.
-Recordings go to `~/Movies/DemoRec/<timestamp>/`.
+Click **Stop** and the app makes the video, then offers **Play** and **Show in Finder**.
+Videos go side by side in `~/Movies/DemoRec/`, named like macOS's own screen recordings
+(`DemoRec 2026-10-15 at 20.27.42.mp4`). The raw screen, camera and pointer recordings are kept in
+`~/Library/Application Support/DemoRec/Recordings/` only while the video is being made, then
+deleted; if making the video fails they stay there, so the recording isn't lost.
 
 The size menu picks the video's frame: Original, YouTube 4K or 1440p (16:9), X 1080p (16:9), or
 LinkedIn 1080p (16:9), square (1:1) or portrait (4:5). When your screen is a different shape

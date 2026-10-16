@@ -253,7 +253,9 @@ final class RecorderModel {
     private var zoomHotKey: HotKey?
     /// Watches the pointer during setup so the preview zooms like the video will.
     private var previewCursor: CursorRecorder?
+    /// Working folder for the recording in progress (see Session.workBase).
     private var sessionDir: URL?
+    private var recordedAt = Date()
     private let fps = 30
 
     init() {
@@ -559,7 +561,8 @@ final class RecorderModel {
                 try await Task.sleep(for: .seconds(1))
             }
             await stopPreviews()
-            let dir = try Session.makeFolder()
+            let dir = try Session.makeFolder(in: Session.workBase)
+            recordedAt = Date()
             let t0 = SharedClock.now()
             let cam = CameraRecorder(url: dir.appendingPathComponent("camera.mov"), fps: fps, startTime: t0)
             let scr = ScreenRecorder(url: dir.appendingPathComponent("screen.mov"), fps: fps, startTime: t0)
@@ -571,17 +574,17 @@ final class RecorderModel {
             screen = scr
             sessionDir = dir
             let cur = CursorRecorder(startTime: t0, target: recorded)
+            cur.onEvent = LivePreview.shared.pointerHandler(startTime: t0, crop: crop)
             cur.start()
             cursor = cur
             let since = Date()
-            cur.onEvent = LivePreview.shared.pointerHandler(startTime: t0, crop: crop)
             phase = .recording(since: since)
             pill.show(since: since, on: recordedScreen(), zoomHint: zoomHotKey == nil ? nil : zoomShortcut.label,
                       discard: { [weak self] in self?.discard() }, stop: { [weak self] in self?.stop() })
+            LivePreview.shared.start(model: self, camera: cam, target: recorded)
             mainWindow?.orderOut(nil)
         } catch is CancellationError {
             phase = .idle
-            LivePreview.shared.start(model: self, camera: cam, target: recorded)
             startPreviews()
         } catch {
             try? await camera?.stop()
@@ -593,6 +596,7 @@ final class RecorderModel {
 
     func stop() {
         guard case .recording = phase, let screen, let camera, let sessionDir else { return }
+        let recordedAt = recordedAt
         phase = .processing(0)
         pill.hide()
         let track = cursor?.stop()
@@ -620,10 +624,15 @@ final class RecorderModel {
                         if case .processing = self.phase { self.phase = .processing(p) }
                     }
                 }
-                let out = sessionDir.appendingPathComponent("final.mp4")
+                // Made in the working folder, so a half-made video never shows up among your videos.
+                let made = sessionDir.appendingPathComponent("final.mp4")
                 try await transcoder.run(screenURL: sessionDir.appendingPathComponent("screen.mov"),
                                          cameraURL: sessionDir.appendingPathComponent("camera.mov"),
-                                         outputURL: out)
+                                         outputURL: made)
+                let out = try Session.videoURL(recordedAt: recordedAt)
+                try FileManager.default.moveItem(at: made, to: out)
+                // The video is all you keep. (If making it failed, the working files stay for another try.)
+                try? FileManager.default.removeItem(at: sessionDir)
                 thumbnail = await Self.thumbnail(for: out)
                 phase = .done(out)
                 loadRecordings()
@@ -666,12 +675,11 @@ final class RecorderModel {
         }
     }
 
-    /// Moves the finished video and its source files to the Trash, after asking.
+    /// Moves the finished video to the Trash, after asking.
     func deleteFinished() {
         guard case .done(let url) = phase else { return }
-        guard Self.confirmDelete("Delete this video?", detail: "The video and its recording files go to the Trash.",
-                                 keep: "Cancel") else { return }
-        Self.trash(url.deletingLastPathComponent())
+        guard Self.confirmDelete("Delete this video?", detail: "It goes to the Trash.", keep: "Cancel") else { return }
+        Self.trash(url)
         loadRecordings()
         reset()
     }
@@ -685,24 +693,31 @@ final class RecorderModel {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    /// Trashes a session folder; refuses anything outside the recordings folder.
-    private static func trash(_ folder: URL) {
-        let base = Session.defaultBase.standardizedFileURL.path + "/"
-        guard folder.standardizedFileURL.path.hasPrefix(base) else { return }
-        try? FileManager.default.trashItem(at: folder, resultingItemURL: nil)
+    /// Trashes a video or a working folder; refuses anything that isn't inside one of DemoRec's folders.
+    private static func trash(_ item: URL) {
+        let path = item.standardizedFileURL.path
+        let inside = [Session.defaultBase, Session.workBase].contains { path.hasPrefix($0.standardizedFileURL.path + "/") }
+        guard inside else { return }
+        try? FileManager.default.trashItem(at: item, resultingItemURL: nil)
     }
 
     // MARK: History
 
     func loadRecordings() {
         let fm = FileManager.default
-        let fmt = DateFormatter()
-        fmt.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let folders = (try? fm.contentsOfDirectory(at: Session.defaultBase, includingPropertiesForKeys: nil)) ?? []
-        recordings = folders.compactMap { folder in
-            guard let date = fmt.date(from: folder.lastPathComponent) else { return nil }
-            let recording = Recording(folder: folder, date: date)
-            return fm.fileExists(atPath: recording.video.path) ? recording : nil
+        let folderName = DateFormatter()
+        folderName.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let items = (try? fm.contentsOfDirectory(at: Session.defaultBase, includingPropertiesForKeys: [.creationDateKey])) ?? []
+        recordings = items.compactMap { item in
+            if item.pathExtension.lowercased() == "mp4" {
+                let made = (try? item.resourceValues(forKeys: [.creationDateKey]))?.creationDate
+                guard let date = Session.recordedAt(video: item) ?? made else { return nil }
+                return Recording(video: item, date: date)
+            }
+            // Older recordings: a folder per recording with final.mp4 inside (the CLI still makes these).
+            guard let date = folderName.date(from: item.lastPathComponent) else { return nil }
+            let video = item.appendingPathComponent("final.mp4")
+            return fm.fileExists(atPath: video.path) ? Recording(video: video, date: date) : nil
         }
         .sorted { $0.date > $1.date }
     }
@@ -782,12 +797,11 @@ final class RecorderModel {
     }
 }
 
-/// A finished recording: its session folder and the video in it.
+/// A finished video and when it was recorded.
 struct Recording: Hashable, Identifiable {
-    let folder: URL
+    let video: URL
     let date: Date
-    var video: URL { folder.appendingPathComponent("final.mp4") }
-    var id: URL { folder }
+    var id: URL { video }
 }
 
 /// One thing you can record: a screen or a window.
