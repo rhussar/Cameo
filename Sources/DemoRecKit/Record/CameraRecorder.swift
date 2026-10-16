@@ -146,8 +146,18 @@ public final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBuffe
         }
     }
 
+    private let frameTapLock = NSLock()
+    private var _onVideoFrame: ((CVPixelBuffer) -> Void)?
+    /// Called on the capture queue with each camera frame, e.g. to show a live preview while recording.
+    /// Keep it quick; hand the buffer off rather than processing it here.
+    public var onVideoFrame: ((CVPixelBuffer) -> Void)? {
+        get { frameTapLock.withLock { _onVideoFrame } }
+        set { frameTapLock.withLock { _onVideoFrame = newValue } }
+    }
+
     public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         let isVideo = output === videoOutput
+        if isVideo, let pb = CMSampleBufferGetImageBuffer(sampleBuffer) { onVideoFrame?(pb) }
         ensureInputs(video: isVideo ? sampleBuffer : nil, audio: isVideo ? nil : sampleBuffer)
         guard writing, CMSampleBufferGetPresentationTimeStamp(sampleBuffer) >= startTime else { return }
         if isVideo {

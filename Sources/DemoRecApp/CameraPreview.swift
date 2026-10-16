@@ -62,6 +62,30 @@ final class CameraPreview: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         frameIndex += 1
         guard frameIndex % 2 == 0, let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return } // ~15 fps is plenty
+        process(pb)
+    }
+
+    private let feedLock = NSLock()
+    private var feedBusy = false
+    private var feedIndex = 0
+
+    /// Takes frames from another capture (the recorder's camera), dropping any that arrive while one is still
+    /// being cut out, so the recorder's buffers are never held up.
+    func feed(_ pb: CVPixelBuffer) {
+        let take = feedLock.withLock {
+            feedIndex += 1
+            guard feedIndex % 2 == 0, !feedBusy else { return false }
+            feedBusy = true
+            return true
+        }
+        guard take else { return }
+        frameQueue.async {
+            self.process(pb)
+            self.feedLock.withLock { self.feedBusy = false }
+        }
+    }
+
+    private func process(_ pb: CVPixelBuffer) {
         let mask = try? masker.mask(for: pb)
         var layout = Layout(feather: 1.5, mirror: mirror)
         layout.look = look

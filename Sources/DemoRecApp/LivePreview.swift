@@ -1,0 +1,164 @@
+import AppKit
+import DemoRecKit
+import Observation
+import SwiftUI
+
+/// A small floating window showing the video as it's being recorded: your screen (cropped, sized and styled
+/// like the output) with you in your spot. It's hidden from the recording. Show or hide it with the eye on the
+/// recording pill; the choice is remembered for next time.
+@MainActor @Observable
+final class LivePreview {
+    static let shared = LivePreview()
+
+    /// Show the preview while recording.
+    private(set) var enabled = UserDefaults.standard.bool(forKey: "previewWhileRecording")
+    var screenImage: CGImage?
+    var personImage: CGImage?
+
+    @ObservationIgnored private weak var model: RecorderModel?
+    @ObservationIgnored private weak var camera: CameraRecorder?
+    @ObservationIgnored private var target: CaptureTarget?
+    @ObservationIgnored private var panel: NSPanel?
+    @ObservationIgnored private var closer: Closer?
+    @ObservationIgnored private var screen: ScreenPreview?
+    @ObservationIgnored private var person: CameraPreview?
+    @ObservationIgnored private var recording = false
+
+    /// Called when recording starts. Opens the window if you had it on last time.
+    func start(model: RecorderModel, camera: CameraRecorder, target: CaptureTarget?) {
+        self.model = model
+        self.camera = camera
+        self.target = target
+        recording = true
+        if enabled { open() }
+    }
+
+    /// Called when recording ends; keeps your show/hide choice.
+    func stop() {
+        recording = false
+        close()
+        model = nil
+        camera = nil
+    }
+
+    func toggle() {
+        enabled.toggle()
+        UserDefaults.standard.set(enabled, forKey: "previewWhileRecording")
+        guard recording else { return }
+        enabled ? open() : close()
+    }
+
+    private func open() {
+        guard panel == nil, let model else { return }
+
+        let person = CameraPreview()
+        person.setMirror(model.mirror)
+        person.setLook(model.look)
+        person.onImage = { [weak self] in self?.personImage = $0 }
+        camera?.onVideoFrame = { [person] in person.feed($0) }
+        self.person = person
+
+        let screen = ScreenPreview()
+        var stage: Stage?
+        if model.styled {
+            stage = Stage()
+            stage?.tilt = model.tilt
+        }
+        screen.setLayout(stage: stage, canvas: model.format.size, crop: model.crop, zoom: false)
+        screen.onImage = { [weak self] in self?.screenImage = $0 }
+        let target = target
+        Task { try? await screen.start(target: target) }
+        self.screen = screen
+
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 480, height: 300),
+                            styleMask: [.titled, .closable, .resizable, .utilityWindow, .nonactivatingPanel],
+                            backing: .buffered, defer: false)
+        panel.title = "Live Preview"
+        panel.contentView = NSHostingView(rootView: LivePreviewView(preview: self, model: model))
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.sharingType = .none
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        let closer = Closer { [weak self] in
+            // Closing the window is the same as turning the preview off.
+            guard let self, self.enabled else { return }
+            self.toggle()
+        }
+        panel.delegate = closer
+        self.closer = closer
+        if let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame {
+            panel.setFrameOrigin(NSPoint(x: visible.minX + 16, y: visible.minY + 16))
+        }
+        panel.orderFrontRegardless()
+        self.panel = panel
+    }
+
+    private func close() {
+        camera?.onVideoFrame = nil
+        if let screen { Task { await screen.stop() } }
+        screen = nil
+        person = nil
+        panel?.delegate = nil
+        panel?.orderOut(nil)
+        panel = nil
+        closer = nil
+        screenImage = nil
+        personImage = nil
+    }
+
+    private final class Closer: NSObject, NSWindowDelegate {
+        let onClose: () -> Void
+        init(onClose: @escaping () -> Void) { self.onClose = onClose }
+        func windowWillClose(_ notification: Notification) { onClose() }
+    }
+}
+
+/// The video as it's being recorded, laid out with the same maths as the setup preview and the final video.
+private struct LivePreviewView: View {
+    let preview: LivePreview
+    let model: RecorderModel
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                Color.black
+                if let screen = preview.screenImage {
+                    Image(decorative: screen, scale: 1).resizable().interpolation(.high)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+                if let person = preview.personImage {
+                    let h = geo.size.height * model.size
+                    let w = h * CGFloat(person.width) / CGFloat(person.height)
+                    Image(decorative: person, scale: 1).resizable()
+                        .frame(width: w, height: h)
+                        .position(center(w: w, h: h, in: geo.size))
+                }
+            }
+        }
+        .aspectRatio(aspect, contentMode: .fit)
+        .frame(minWidth: 240, minHeight: 135)
+    }
+
+    private var aspect: CGFloat {
+        if let s = preview.screenImage { return CGFloat(s.width) / CGFloat(max(s.height, 1)) }
+        if let f = model.format.size { return f.width / f.height }
+        return 16 / 9
+    }
+
+    private func center(w: CGFloat, h: CGFloat, in size: CGSize) -> CGPoint {
+        if let p = model.position {
+            let bottom = p.y * max(size.height - h, 0)
+            return CGPoint(x: p.x * size.width, y: size.height - bottom - h / 2)
+        }
+        let m = size.height * RecorderModel.margin(for: model.corner)
+        return switch model.corner {
+        case .bottomRight: CGPoint(x: size.width - m - w / 2, y: size.height - m - h / 2)
+        case .bottomLeft: CGPoint(x: m + w / 2, y: size.height - m - h / 2)
+        case .topRight: CGPoint(x: size.width - m - w / 2, y: m + h / 2)
+        case .topLeft: CGPoint(x: m + w / 2, y: m + h / 2)
+        }
+    }
+}

@@ -35,6 +35,7 @@ final class PillPanel {
     func hide() {
         panel?.orderOut(nil)
         panel = nil
+        LivePreview.shared.stop() // recording ended (stopped or discarded)
     }
 
     /// Acknowledges the zoom shortcut with a bounce, and shows whether you're zoomed in now.
@@ -74,6 +75,7 @@ private struct RecordingPill: View {
                 }
                 .help(marks.zoomedIn ? "Zoomed in. Press \(zoomHint) to zoom back out" : "Press \(zoomHint) to zoom in on the pointer")
             }
+            PreviewToggle(preview: LivePreview.shared)
             Button(action: discard) {
                 Image(systemName: "trash")
             }
@@ -98,5 +100,20 @@ private struct RecordingPill: View {
     private func elapsed(_ now: Date) -> String {
         let s = max(0, Int(now.timeIntervalSince(since)))
         return String(format: "%d:%02d", s / 60, s % 60)
+    }
+}
+
+/// Shows or hides the live preview window while recording.
+private struct PreviewToggle: View {
+    let preview: LivePreview
+
+    var body: some View {
+        Button(action: preview.toggle) {
+            Image(systemName: preview.enabled ? "eye.fill" : "eye.slash")
+                .foregroundStyle(preview.enabled ? Color.accentColor : .secondary)
+        }
+        .buttonStyle(.borderless)
+        .help(preview.enabled ? "Hide the live preview" : "Show a live preview of the video")
+        .accessibilityLabel(preview.enabled ? "Hide live preview" : "Show live preview")
     }
 }

@@ -580,6 +580,7 @@ final class RecorderModel {
             mainWindow?.orderOut(nil)
         } catch is CancellationError {
             phase = .idle
+            LivePreview.shared.start(model: self, camera: cam, target: recorded)
             startPreviews()
         } catch {
             try? await camera?.stop()
