@@ -74,6 +74,9 @@ public final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         cfg.capturesAudio = false
 
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        // Write the index every couple of seconds, so if the Mac crashes or loses power mid-recording,
+        // everything up to the last few seconds can still be opened.
+        writer.movieFragmentInterval = CMTime(seconds: 2, preferredTimescale: 600)
         let settings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.hevc,
             AVVideoWidthKey: width,

@@ -1,6 +1,6 @@
 import Foundation
 
-public enum Corner: String, CaseIterable, Sendable {
+public enum Corner: String, CaseIterable, Sendable, Codable {
     case bottomRight = "bottom-right"
     case bottomLeft = "bottom-left"
     case topRight = "top-right"
@@ -12,7 +12,7 @@ public enum MaskQuality: String, CaseIterable, Sendable {
 }
 
 /// How the presenter cutout is placed over the screen recording.
-public struct Layout: Sendable {
+public struct Layout: Sendable, Codable {
     public var corner: Corner = .bottomRight
     /// Cutout height as a fraction of the screen height.
     public var scale: Double = 0.35
@@ -62,7 +62,7 @@ extension Layout {
 
 /// Presentation styling: the screen becomes a rounded, slightly tilted card with a drop shadow,
 /// floating over a zoomed and blurred copy of itself. Fractions are relative to the output frame height.
-public struct Stage: Sendable {
+public struct Stage: Sendable, Codable {
     /// Card height as a fraction of the frame height.
     public var inset: Double = 0.88
     /// Horizontal position of the card centre, 0 = left edge, 1 = right edge.
@@ -212,6 +212,30 @@ public enum Session {
             if let date = fmt.date(from: name) ?? name.lastIndex(of: " ").flatMap({ fmt.date(from: String(name[..<$0])) }) { return date }
         }
         return nil
+    }
+
+    /// The layout a recording is made with, saved beside its files when it starts, so a recording that never
+    /// became a video (a crash, a failed render) can be finished later exactly as it would have been.
+    public static let layoutFileName = "layout.json"
+
+    public static func saveLayout(_ layout: Layout, in dir: URL) throws {
+        try JSONEncoder().encode(layout).write(to: dir.appendingPathComponent(layoutFileName))
+    }
+
+    public static func loadLayout(from dir: URL) -> Layout? {
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent(layoutFileName)) else { return nil }
+        return try? JSONDecoder().decode(Layout.self, from: data)
+    }
+
+    private static let folderName: DateFormatter = {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        return fmt
+    }()
+
+    /// When the recording in a folder made by `makeFolder` started.
+    public static func startedAt(folder: URL) -> Date? {
+        folderName.date(from: folder.lastPathComponent)
     }
 
     public static func makeFolder(in base: URL = defaultBase) throws -> URL {

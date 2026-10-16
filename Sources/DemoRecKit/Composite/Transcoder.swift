@@ -232,7 +232,10 @@ public final class Transcoder {
         videoInput.requestMediaDataWhenReady(on: videoQueue) {
             while videoInput.isReadyForMoreMediaData {
                 do {
-                    guard let (buf, t) = try nextFrame() else {
+                    // Drain after every frame. This loop can run for the whole video without returning, and without
+                    // a pool each decoded screen frame (~20 MB at ultrawide/4K sizes) stays alive in the system's
+                    // video decoder until the end: tens of GB for a few minutes, enough to freeze the Mac.
+                    guard let (buf, t) = try autoreleasepool(invoking: { try nextFrame() }) else {
                         videoInput.markAsFinished()
                         group.leave()
                         return

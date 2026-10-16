@@ -23,6 +23,9 @@ final class RecorderModel {
     var thumbnail: CGImage?
     /// Past recordings, newest first.
     var recordings: [Recording] = []
+    /// Recordings whose video was never made (Cameo or the Mac stopped while making it), newest first.
+    /// Their screen, camera and pointer files are still in Session.workBase.
+    var unfinished: [URL] = []
     var previewHovering = false
     var lookOpen = false
     /// Window content width, so controls can grow with a bigger window.
@@ -265,6 +268,8 @@ final class RecorderModel {
     /// Working folder for the recording in progress (see Session.workBase).
     private var sessionDir: URL?
     private var recordedAt = Date()
+    /// The layout the recording in progress will be made with (also saved in its folder).
+    private var recordingLayout: Layout?
     private let fps = 30
 
     init() {
@@ -358,6 +363,7 @@ final class RecorderModel {
     }
 
     func appeared() {
+        loadRecordings()
         if previewsPaused {
             previewsPaused = false
             startScreenPreview()
@@ -604,6 +610,9 @@ final class RecorderModel {
             try await scr.start(target: recorded, excludingCurrentApp: true)
             screen = scr
             sessionDir = dir
+            let layout = currentLayout(screenSize: scr.pixelSize)
+            recordingLayout = layout
+            try? Session.saveLayout(layout, in: dir)
             let cur = CursorRecorder(startTime: t0, target: recorded)
             cur.onEvent = LivePreview.shared.pointerHandler(startTime: t0, crop: crop)
             cur.start()
@@ -632,38 +641,15 @@ final class RecorderModel {
         pill.hide()
         let track = cursor?.stop()
         cursor = nil
-        let zoom = Self.zoomSettings
         mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate()
-        var layout = Layout(corner: corner, scale: size, mirror: mirror)
-        layout.crop = crop
-        // Same margin the setup preview draws.
-        let frameHeight = format.size?.height ?? layout.cropRect(in: screen.pixelSize).height
-        layout.margin = Self.margin(for: corner) * frameHeight
-        layout.stage = stage
-        layout.canvas = format.size
-        layout.look = look
-        layout.position = position
+        let layout = recordingLayout ?? currentLayout(screenSize: screen.pixelSize)
         task = Task {
             do {
                 try await screen.stop()
                 try await camera.stop()
                 try? track?.save(to: sessionDir)
-                let transcoder = Transcoder(layout: layout, fps: fps, outputHeight: nil, quality: .balanced, cursor: track, zoom: zoom)
-                transcoder.onProgress = { p in
-                    Task { @MainActor in
-                        if case .processing = self.phase { self.phase = .processing(p) }
-                    }
-                }
-                // Made in the working folder, so a half-made video never shows up among your videos.
-                let made = sessionDir.appendingPathComponent("final.mp4")
-                try await transcoder.run(screenURL: sessionDir.appendingPathComponent("screen.mov"),
-                                         cameraURL: sessionDir.appendingPathComponent("camera.mov"),
-                                         outputURL: made)
-                let out = try Session.videoURL(recordedAt: recordedAt)
-                try FileManager.default.moveItem(at: made, to: out)
-                // The video is all you keep. (If making it failed, the working files stay for another try.)
-                try? FileManager.default.removeItem(at: sessionDir)
+                let out = try await makeVideo(in: sessionDir, layout: layout, cursor: track, recordedAt: recordedAt)
                 thumbnail = await Self.thumbnail(for: out)
                 phase = .done(out)
                 loadRecordings()
@@ -673,7 +659,74 @@ final class RecorderModel {
             }
             self.screen = nil
             self.camera = nil
+            self.recordingLayout = nil
         }
+    }
+
+    /// The layout for a recording of a `screenSize` (pixels) screen, from the current settings.
+    private func currentLayout(screenSize: CGSize) -> Layout {
+        var layout = Layout(corner: corner, scale: size, mirror: mirror)
+        layout.crop = crop
+        // Same margin the setup preview draws.
+        let frameHeight = format.size?.height ?? layout.cropRect(in: screenSize).height
+        layout.margin = Self.margin(for: corner) * frameHeight
+        layout.stage = stage
+        layout.canvas = format.size
+        layout.look = look
+        layout.position = position
+        return layout
+    }
+
+    /// Makes the video from a working folder's recordings, moves it in with your other videos, and clears the folder.
+    private func makeVideo(in dir: URL, layout: Layout, cursor: CursorTrack?, recordedAt: Date) async throws -> URL {
+        let transcoder = Transcoder(layout: layout, fps: fps, outputHeight: nil, quality: .balanced, cursor: cursor, zoom: Self.zoomSettings)
+        transcoder.onProgress = { p in
+            Task { @MainActor in
+                if case .processing = self.phase { self.phase = .processing(p) }
+            }
+        }
+        // Made in the working folder, so a half-made video never shows up among your videos.
+        let made = dir.appendingPathComponent("final.mp4")
+        try await transcoder.run(screenURL: dir.appendingPathComponent("screen.mov"),
+                                 cameraURL: dir.appendingPathComponent("camera.mov"),
+                                 outputURL: made)
+        let out = try Session.videoURL(recordedAt: recordedAt)
+        try FileManager.default.moveItem(at: made, to: out)
+        // The video is all you keep. (If making it failed, the working files stay for another try.)
+        try? FileManager.default.removeItem(at: dir)
+        return out
+    }
+
+    /// Makes the video for a recording that was never finished, with the layout it was recorded with
+    /// (or today's settings, for recordings from before layouts were saved).
+    func finish(_ dir: URL) {
+        guard isSetup || isDone else { return }
+        cropping = false
+        phase = .processing(0)
+        task = Task {
+            do {
+                await stopPreviews()
+                var layout = Session.loadLayout(from: dir)
+                if layout == nil {
+                    let track = try await AVURLAsset(url: dir.appendingPathComponent("screen.mov")).loadTracks(withMediaType: .video).first
+                    layout = currentLayout(screenSize: try await track?.load(.naturalSize) ?? .zero)
+                }
+                let made = (try? dir.resourceValues(forKeys: [.creationDateKey]))?.creationDate
+                let out = try await makeVideo(in: dir, layout: layout!, cursor: CursorTrack.load(from: dir),
+                                              recordedAt: Session.startedAt(folder: dir) ?? made ?? Date())
+                thumbnail = await Self.thumbnail(for: out)
+                phase = .done(out)
+                loadRecordings()
+            } catch {
+                loadRecordings()
+                phase = .failed("Couldn't finish that recording: \(message(for: error))", needsSettings: false)
+                startPreviews()
+            }
+        }
+    }
+
+    func revealUnfinished(_ dir: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([dir.appendingPathComponent("screen.mov")])
     }
 
     func reset() {
@@ -751,6 +804,13 @@ final class RecorderModel {
             return fm.fileExists(atPath: video.path) ? Recording(video: video, date: date) : nil
         }
         .sorted { $0.date > $1.date }
+        let work = (try? fm.contentsOfDirectory(at: Session.workBase, includingPropertiesForKeys: nil)) ?? []
+        unfinished = work
+            .filter { dir in
+                dir.standardizedFileURL != sessionDir?.standardizedFileURL
+                    && ["screen.mov", "camera.mov"].allSatisfy { fm.fileExists(atPath: dir.appendingPathComponent($0).path) }
+            }
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }
     }
 
     func reveal(_ recording: Recording) {

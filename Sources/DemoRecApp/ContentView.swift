@@ -35,6 +35,9 @@ private struct BottomBar: View {
                 if case .failed(let msg, let needsSettings) = model.phase {
                     Notice(text: msg, action: needsSettings ? ("Open Settings", { model.openPrivacySettings() }) : nil)
                 }
+                if let dir = model.unfinished.first, model.phase == .idle || isFailed {
+                    UnfinishedNotice(model: model, dir: dir)
+                }
                 // One row when it fits; otherwise what you record on top, how it looks + Record below.
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: spacing) {
@@ -85,6 +88,11 @@ private struct BottomBar: View {
         case .done:
             done
         }
+    }
+
+    private var isFailed: Bool {
+        if case .failed = model.phase { return true }
+        return false
     }
 
     private var wide: Bool { model.windowWidth >= 1400 }
@@ -832,6 +840,33 @@ private struct Notice: View {
         }
         .padding(10)
         .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// A recording that never became a video (say, the Mac stopped while making it): its files are safe, one click finishes it.
+private struct UnfinishedNotice: View {
+    @Bindable var model: RecorderModel
+    let dir: URL
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "film.stack").foregroundStyle(.tint)
+            Text(text).font(.callout).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Button("Show Files") { model.revealUnfinished(dir) }.controlSize(.small)
+            Button("Make the Video") { model.finish(dir) }
+                .controlSize(.small)
+                .buttonStyle(.borderedProminent)
+        }
+        .padding(10)
+        .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var text: String {
+        let more = model.unfinished.count - 1
+        let when = Session.startedAt(folder: dir).map { "from \($0.formatted(date: .abbreviated, time: .shortened)) " } ?? ""
+        return "Your recording \(when)wasn't made into a video yet. It's safe."
+            + (more > 0 ? " (\(more) more after this one.)" : "")
     }
 }
 
