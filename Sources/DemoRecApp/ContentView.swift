@@ -138,30 +138,18 @@ private struct BottomBar: View {
     }
 }
 
-/// Past recordings: pick one to show it in Finder, or open the whole folder.
+/// Your recordings: one click opens the folder in Finder.
 private struct RecordingsMenu: View {
     @Bindable var model: RecorderModel
 
     var body: some View {
-        Menu {
-            if model.recordings.isEmpty {
-                Text("No recordings yet")
-            } else {
-                Section("Recent") {
-                    ForEach(model.recordings.prefix(15)) { recording in
-                        Button(recording.date.formatted(date: .abbreviated, time: .shortened)) { model.reveal(recording) }
-                    }
-                }
-            }
-            Divider()
-            Button("Open Recordings Folder", action: model.openRecordingsFolder)
-        } label: {
-            Image(systemName: "clock.arrow.circlepath")
+        Button(action: model.openRecordingsFolder) {
+            Image(systemName: "folder")
         }
         .menuStyle(.button)
         .fixedSize()
-        .help("Your recordings: show one in Finder")
-        .onAppear(perform: model.loadRecordings)
+        .help("Open your recordings folder in Finder")
+        .accessibilityLabel("Open recordings folder")
     }
 }
 
@@ -220,7 +208,6 @@ private struct FormatPicker: View {
         } label: {
             Label(label, systemImage: "aspectratio")
         }
-        .menuStyle(.button)
         .fixedSize()
         .help(sizeHelp)
     }
