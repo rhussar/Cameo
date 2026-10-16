@@ -92,12 +92,8 @@ public enum ZoomPlanner {
     public static func path(track: CursorTrack, settings: ZoomSettings, start: Double, fps: Int, frames: Int) -> [ZoomState] {
         let segments = segments(for: track, settings: settings)
         guard !segments.isEmpty, frames > 0 else { return Array(repeating: .none, count: max(frames, 0)) }
-        let level = max(settings.level, 1)
         let dt = 1 / Double(fps)
-        // Half the visible width/height when fully zoomed; the pointer can roam the middle 60% before the camera follows.
-        let deadZone = 0.5 / level * 0.6
-        var scale = Spring(value: 1), x = Spring(value: 0.5), y = Spring(value: 0.5)
-        var targetX = 0.5, targetY = 0.5
+        var camera = Camera(level: settings.level)
         var segIndex = 0
         var path: [ZoomState] = []
         path.reserveCapacity(frames)
@@ -106,32 +102,64 @@ public enum ZoomPlanner {
             let t = start + Double(i) * dt
             while segIndex < segments.count, segments[segIndex].end < t { segIndex += 1 }
             let seg = segIndex < segments.count && segments[segIndex].start <= t ? segments[segIndex] : nil
-            if let seg {
-                if t < seg.focus.t {
-                    // Heading in: look where the moment will be, not where the pointer is on its way.
-                    targetX = seg.focus.x
-                    targetY = seg.focus.y
-                } else if let c = position(in: track.samples, at: t + 0.15) {
-                    if abs(c.x - targetX) > deadZone { targetX = c.x - deadZone * (c.x > targetX ? 1 : -1) }
-                    if abs(c.y - targetY) > deadZone { targetY = c.y - deadZone * (c.y > targetY ? 1 : -1) }
+            // Already zoomed when the video starts: begin in place rather than animating in from frame one.
+            if i == 0, let seg { camera.snap(to: seg.focus) }
+            path.append(camera.step(t: t, focus: seg?.focus, cursor: position(in: track.samples, at: t + 0.15), dt: dt))
+        }
+        return path
+    }
+
+    /// Moves the view: zoomed in on `focus` while there is one, following the pointer once it nears the edge
+    /// of the view, and back out to the whole screen when there isn't. Springs keep every move smooth.
+    struct Camera {
+        let level: Double
+        /// Half the visible width/height when fully zoomed; the pointer can roam the middle 60% before the camera follows.
+        let deadZone: Double
+        var scale = Spring(value: 1), x = Spring(value: 0.5), y = Spring(value: 0.5)
+        var targetX = 0.5, targetY = 0.5
+        var wasZoomed = false
+
+        init(level: Double) {
+            self.level = max(level, 1)
+            deadZone = 0.5 / self.level * 0.6
+        }
+
+        var isSettled: Bool {
+            !wasZoomed && abs(scale.value - 1) < 0.001 && abs(scale.velocity) < 0.001
+        }
+
+        mutating func snap(to focus: CursorTrack.Point) {
+            aim(at: focus.x, focus.y)
+            scale.value = level; x.value = targetX; y.value = targetY
+        }
+
+        mutating func step(t: Double, focus: CursorTrack.Point?, cursor: (x: Double, y: Double)?, dt: Double) -> ZoomState {
+            if let focus {
+                if !wasZoomed || t < focus.t {
+                    // Heading in: look where the moment is, not where the pointer is on its way.
+                    aim(at: focus.x, focus.y)
+                } else if let c = cursor {
+                    var tx = targetX, ty = targetY
+                    if abs(c.x - tx) > deadZone { tx = c.x - deadZone * (c.x > tx ? 1 : -1) }
+                    if abs(c.y - ty) > deadZone { ty = c.y - deadZone * (c.y > ty ? 1 : -1) }
+                    aim(at: tx, ty)
                 }
-                let lo = 0.5 / level
-                targetX = min(max(targetX, lo), 1 - lo)
-                targetY = min(max(targetY, lo), 1 - lo)
             }
-            if i == 0, seg != nil {
-                // Already zoomed when the video starts: begin in place rather than animating in from frame one.
-                scale.value = level; x.value = targetX; y.value = targetY
-            }
-            scale.step(toward: seg == nil ? 1 : level, omega: 7, dt: dt)
+            wasZoomed = focus != nil
+            scale.step(toward: focus == nil ? 1 : level, omega: 7, dt: dt)
             x.step(toward: targetX, omega: 8, dt: dt)
             y.step(toward: targetY, omega: 8, dt: dt)
             // Keep the view on the screen at whatever zoom it's at right now.
             let s = max(scale.value, 1)
             let half = 0.5 / s
-            path.append(ZoomState(scale: s, x: min(max(x.value, half), 1 - half), y: min(max(y.value, half), 1 - half)))
+            return ZoomState(scale: s, x: min(max(x.value, half), 1 - half), y: min(max(y.value, half), 1 - half))
         }
-        return path
+
+        private mutating func aim(at x: Double, _ y: Double) {
+            let lo = 0.5 / level
+            targetX = min(max(x, lo), 1 - lo)
+            targetY = min(max(y, lo), 1 - lo)
+        }
     }
 
     /// The pointer position at time t, interpolated between samples.
@@ -164,5 +192,87 @@ public enum ZoomPlanner {
             velocity = (velocity + hoo * (target - value)) * detInv
             value = newValue
         }
+    }
+}
+
+/// The same camera as ZoomPlanner, driven as things happen instead of from a finished recording, for the
+/// live preview. It can't see ahead, so it zooms just after a click instead of arriving with it.
+/// Feed it the pointer and step it from any threads; points use the same clock throughout.
+public final class LiveZoom: @unchecked Sendable {
+    private let lock = NSLock()
+    private var settings: ZoomSettings
+    private var camera: ZoomPlanner.Camera
+    private var focus: CursorTrack.Point?
+    private var zoomedUntil = -Double.infinity
+    private var cursor: CursorTrack.Point?
+    // Rest detection, as in ZoomPlanner.rests.
+    private var anchor: CursorTrack.Point?
+    private var lastRest: CursorTrack.Point?
+    private var resting = false
+
+    public init(settings: ZoomSettings = ZoomSettings()) {
+        self.settings = settings
+        camera = ZoomPlanner.Camera(level: settings.level)
+    }
+
+    public func setAuto(_ auto: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        settings.auto = auto
+        if !auto { zoomedUntil = -.infinity } // drop any auto zoom in progress
+    }
+
+    /// Forget everything, e.g. when what's previewed changes.
+    public func reset() {
+        lock.lock(); defer { lock.unlock() }
+        camera = ZoomPlanner.Camera(level: settings.level)
+        focus = nil; zoomedUntil = -.infinity; cursor = nil; anchor = nil; lastRest = nil; resting = false
+    }
+
+    public func moved(_ p: CursorTrack.Point) {
+        lock.lock(); defer { lock.unlock() }
+        cursor = p
+        guard let a = anchor else { anchor = p; lastRest = p; return }
+        if hypot(p.x - a.x, p.y - a.y) > ZoomPlanner.restRadius {
+            anchor = p
+            resting = false
+            return
+        }
+        let duration = p.t - a.t
+        if !resting, duration >= ZoomPlanner.restMinDuration, let last = lastRest,
+           hypot(a.x - last.x, a.y - last.y) >= ZoomPlanner.restMinTravel,
+           (0...1).contains(a.x), (0...1).contains(a.y) {
+            resting = true
+            lastRest = a
+        }
+        if resting, settings.auto {
+            zoom(on: a, until: a.t + min(max(duration, ZoomPlanner.restMinHold), ZoomPlanner.restMaxHold))
+        }
+    }
+
+    public func clicked(_ p: CursorTrack.Point) {
+        lock.lock(); defer { lock.unlock() }
+        if settings.auto { zoom(on: p, until: p.t + ZoomPlanner.clickHold) }
+    }
+
+    public func marked(_ p: CursorTrack.Point) {
+        lock.lock(); defer { lock.unlock() }
+        zoom(on: p, until: p.t + ZoomPlanner.markHold)
+    }
+
+    /// True while the view is zoomed or moving, so the preview knows to keep redrawing.
+    public var isActive: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return focus != nil || !camera.isSettled
+    }
+
+    public func step(now: Double, dt: Double) -> ZoomState {
+        lock.lock(); defer { lock.unlock() }
+        if now > zoomedUntil { focus = nil }
+        return camera.step(t: now, focus: focus, cursor: cursor.map { ($0.x, $0.y) }, dt: dt)
+    }
+
+    private func zoom(on p: CursorTrack.Point, until end: Double) {
+        if focus == nil || p.t > zoomedUntil { focus = p }
+        zoomedUntil = max(zoomedUntil, end)
     }
 }

@@ -55,11 +55,22 @@ public final class CursorRecorder: @unchecked Sendable {
     private var tick = 0
     private var buttonsDown = false
     private let lock = NSLock()
+    private let keepsTrack: Bool
 
-    /// `target` nil means the main display.
-    public init(startTime: CMTime, target: CaptureTarget?) {
+    public enum Event: Sendable {
+        case move(CursorTrack.Point)
+        case click(CursorTrack.Point)
+        case mark(CursorTrack.Point)
+    }
+    /// Called on the recorder's own queue as things happen. Set it before `start()`.
+    public var onEvent: ((Event) -> Void)?
+
+    /// `target` nil means the main display. With `keepsTrack` false nothing is kept, only reported through `onEvent`
+    /// (for a live preview that runs for as long as the app is open).
+    public init(startTime: CMTime, target: CaptureTarget?, keepsTrack: Bool = true) {
         self.startTime = startTime
         self.target = target
+        self.keepsTrack = keepsTrack
     }
 
     public func start() {
@@ -76,7 +87,8 @@ public final class CursorRecorder: @unchecked Sendable {
         queue.async { [self] in
             // The pointer is on another screen: nothing here to zoom in on.
             guard let p = point(), (0...1).contains(p.x), (0...1).contains(p.y) else { return }
-            lock.lock(); track.marks.append(p); lock.unlock()
+            if keepsTrack { lock.lock(); track.marks.append(p); lock.unlock() }
+            onEvent?(.mark(p))
         }
     }
 
@@ -97,12 +109,18 @@ public final class CursorRecorder: @unchecked Sendable {
         guard let p = point() else { return }
         let down = CGEventSource.buttonState(.combinedSessionState, button: .left)
             || CGEventSource.buttonState(.combinedSessionState, button: .right)
-        lock.lock()
         // ~60 samples a second is enough to follow the pointer; the 120 Hz poll is for catching short clicks.
-        if tick % 2 == 0 { track.samples.append(p) }
-        if down, !buttonsDown, (0...1).contains(p.x), (0...1).contains(p.y) { track.clicks.append(p) }
-        lock.unlock()
+        let sample = tick % 2 == 0
+        let click = down && !buttonsDown && (0...1).contains(p.x) && (0...1).contains(p.y)
         buttonsDown = down
+        if keepsTrack {
+            lock.lock()
+            if sample { track.samples.append(p) }
+            if click { track.clicks.append(p) }
+            lock.unlock()
+        }
+        if sample { onEvent?(.move(p)) }
+        if click { onEvent?(.click(p)) }
     }
 
     private func point() -> CursorTrack.Point? {

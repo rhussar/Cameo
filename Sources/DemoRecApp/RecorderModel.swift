@@ -109,7 +109,10 @@ final class RecorderModel {
     }
     /// Zoom in on clicks and pauses. The zoom hotkey works either way.
     var autoZoom: Bool {
-        didSet { UserDefaults.standard.set(autoZoom, forKey: "autoZoom") }
+        didSet {
+            UserDefaults.standard.set(autoZoom, forKey: "autoZoom")
+            screenPreview.liveZoom.setAuto(autoZoom)
+        }
     }
     /// Card tilt in degrees when styled; positive brings the left edge closer.
     var tilt: Double {
@@ -178,10 +181,11 @@ final class RecorderModel {
     }
 
     private func updateScreenPreviewLayout() {
+        screenPreview.liveZoom.reset() // the zoom works in the crop's coordinates
         if cropping {
-            screenPreview.setLayout(stage: nil, canvas: nil, crop: nil)
+            screenPreview.setLayout(stage: nil, canvas: nil, crop: nil, zoom: false)
         } else {
-            screenPreview.setLayout(stage: stage, canvas: format.size, crop: crop)
+            screenPreview.setLayout(stage: stage, canvas: format.size, crop: crop, zoom: true)
         }
     }
 
@@ -238,6 +242,8 @@ final class RecorderModel {
     private var camera: CameraRecorder?
     private var cursor: CursorRecorder?
     private var zoomHotKey: HotKey?
+    /// Watches the pointer during setup so the preview zooms like the video will.
+    private var previewCursor: CursorRecorder?
     private var sessionDir: URL?
     private let fps = 30
 
@@ -260,6 +266,7 @@ final class RecorderModel {
         preview.setMirror(mirror)
         preview.setLook(look)
         updateScreenPreviewLayout()
+        screenPreview.liveZoom.setAuto(autoZoom)
         preview.onImage = { [weak self] in self?.previewImage = $0 }
         screenPreview.onImage = { [weak self] in self?.screenImage = $0 }
         refreshDevices()
@@ -313,6 +320,18 @@ final class RecorderModel {
     }
 
     func appeared() {
+        // One shortcut for the app's lifetime: during setup it zooms the preview, while recording it marks the video.
+        if zoomHotKey == nil {
+            zoomHotKey = HotKey.zoom { [weak self] in
+                guard let self else { return }
+                if case .recording = phase {
+                    cursor?.mark()
+                    pill.flashZoom()
+                } else if isSetup, !cropping {
+                    previewCursor?.mark()
+                }
+            }
+        }
         Task {
             if await AVCaptureDevice.requestAccess(for: .video) {
                 cameraDenied = false
@@ -375,6 +394,7 @@ final class RecorderModel {
     private func startScreenPreview() {
         screenImage = nil
         let target = target
+        startPreviewCursor(target: target)
         Task {
             do {
                 try await screenPreview.start(target: target)
@@ -384,12 +404,45 @@ final class RecorderModel {
         }
     }
 
+    private func startPreviewCursor(target: CaptureTarget?) {
+        _ = previewCursor?.stop()
+        screenPreview.liveZoom.reset()
+        // Time zero, so points carry plain host-clock seconds like ScreenPreview.now().
+        let watcher = CursorRecorder(startTime: .zero, target: target ?? currentDisplayID().map { .display($0) }, keepsTrack: false)
+        watcher.onEvent = { [weak self] event in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.previewPointer(event) } }
+        }
+        watcher.start()
+        previewCursor = watcher
+    }
+
+    /// Passes the pointer to the preview's zoom, in the crop's coordinates. Ignores it over DemoRec's own
+    /// windows: they aren't in the recording, and clicking DemoRec's buttons shouldn't zoom the preview.
+    private func previewPointer(_ event: CursorRecorder.Event) {
+        guard isSetup, !cropping else { return }
+        let mouse = NSEvent.mouseLocation
+        guard !NSApp.windows.contains(where: { $0.isVisible && $0.frame.contains(mouse) }) else { return }
+        let zoom = screenPreview.liveZoom
+        let c = crop ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+        func map(_ p: CursorTrack.Point) -> CursorTrack.Point {
+            CursorTrack.Point(t: p.t, x: (p.x - c.minX) / c.width, y: (p.y - c.minY) / c.height)
+        }
+        func inside(_ p: CursorTrack.Point) -> Bool { (0...1).contains(p.x) && (0...1).contains(p.y) }
+        switch event {
+        case .move(let p): zoom.moved(map(p))
+        case .click(let p): if inside(map(p)) { zoom.clicked(map(p)) }
+        case .mark(let p): if inside(map(p)) { zoom.marked(map(p)) }
+        }
+    }
+
     private func startPreviews() {
         startCameraPreview()
         startScreenPreview()
     }
 
     private func stopPreviews() async {
+        _ = previewCursor?.stop()
+        previewCursor = nil
         await preview.stop()
         await screenPreview.stop()
     }
@@ -433,10 +486,6 @@ final class RecorderModel {
             let cur = CursorRecorder(startTime: t0, target: recorded)
             cur.start()
             cursor = cur
-            zoomHotKey = HotKey.zoom { [weak self] in
-                self?.cursor?.mark()
-                self?.pill.flashZoom()
-            }
             let since = Date()
             phase = .recording(since: since)
             pill.show(since: since, on: recordedScreen(), zoomHint: zoomHotKey == nil ? nil : HotKey.zoomLabel,
@@ -457,8 +506,6 @@ final class RecorderModel {
         guard case .recording = phase, let screen, let camera, let sessionDir else { return }
         phase = .processing(0)
         pill.hide()
-        zoomHotKey?.unregister()
-        zoomHotKey = nil
         let track = cursor?.stop()
         cursor = nil
         let zoom = ZoomSettings(auto: autoZoom)

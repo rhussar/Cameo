@@ -5,6 +5,7 @@ import ScreenCaptureKit
 
 /// Low-res, low-fps live view of whatever will be recorded, for the setup screen.
 /// Display previews leave out DemoRec's own window so the preview doesn't show itself.
+/// Zooms live like the video will: feed `liveZoom` the pointer and it redraws smoothly while zoomed.
 final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     /// Delivered on the main queue.
     var onImage: ((CGImage) -> Void)?
@@ -17,13 +18,25 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     private var canvas: CGSize? // queue only
     private var crop: CGRect? // queue only
     private var lastFrame: CIImage? // queue only
+    private var zoomEnabled = true // queue only
+    private var zoom = ZoomState.none // queue only
+    private var lastZoomStep: Double? // queue only
+    private var zoomTimer: DispatchSourceTimer?
+    /// In the coordinates of the cropped screen, on the host clock in seconds (see `now`).
+    let liveZoom = LiveZoom()
+
+    /// Seconds on the host clock: what CursorRecorder reports when started at time zero.
+    static func now() -> Double { SharedClock.now().seconds }
 
     /// Styles and frames the preview like the final video. Re-renders the last frame, since a still screen sends no new ones.
-    func setLayout(stage: Stage?, canvas: CGSize?, crop: CGRect?) {
+    /// `zoom` false shows the screen unzoomed whatever the pointer does (e.g. while editing the crop).
+    func setLayout(stage: Stage?, canvas: CGSize?, crop: CGRect?, zoom: Bool) {
         queue.async {
             self.stage = stage
             self.canvas = canvas
             self.crop = crop
+            self.zoomEnabled = zoom
+            if !zoom { self.zoom = .none }
             if let frame = self.lastFrame { self.render(frame) }
         }
     }
@@ -52,6 +65,7 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         try await stream.startCapture()
         if gen == generation {
             self.stream = stream
+            startZoomTimer()
         } else {
             try? await stream.stopCapture()
         }
@@ -60,6 +74,8 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     @MainActor
     func stop() async {
         generation += 1
+        zoomTimer?.cancel()
+        zoomTimer = nil
         if let stream {
             self.stream = nil
             try? await stream.stopCapture()
@@ -77,12 +93,33 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         guard let raw = ciContext.createCGImage(buffer, from: buffer.extent) else { return }
         let frame = CIImage(cgImage: raw)
         lastFrame = frame
-        render(frame)
+        if zoom == .none { render(frame) } // while zoomed, the zoom timer redraws anyway
+    }
+
+    /// Steps the zoom 30 times a second and redraws while it's zoomed or moving.
+    private func startZoomTimer() {
+        zoomTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(33), leeway: .milliseconds(4))
+        timer.setEventHandler { [weak self] in self?.stepZoom() }
+        timer.resume()
+        zoomTimer = timer
+    }
+
+    private func stepZoom() {
+        let now = Self.now()
+        defer { lastZoomStep = now }
+        guard zoomEnabled, liveZoom.isActive || zoom != .none else { return }
+        let dt = min(max(now - (lastZoomStep ?? now), 0.001), 0.1)
+        var z = liveZoom.step(now: now, dt: dt)
+        if z.scale < 1.001 { z = .none }
+        zoom = z
+        if let frame = lastFrame { render(frame) }
     }
 
     private func render(_ frame: CIImage) {
         var cg = frame.cgImage
-        if stage != nil || canvas != nil || crop != nil {
+        if stage != nil || canvas != nil || crop != nil || zoom != .none {
             var layout = Layout()
             layout.stage = stage
             layout.crop = crop
@@ -91,7 +128,7 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
                 let s = min(1, 1600 / max(canvas.width, canvas.height))
                 layout.canvas = CGSize(width: (canvas.width * s).rounded(), height: (canvas.height * s).rounded())
             }
-            let styled = Compositor(layout: layout).compose(screen: frame, cutout: nil)
+            let styled = Compositor(layout: layout).compose(screen: frame, cutout: nil, zoom: zoom)
             cg = ciContext.createCGImage(styled, from: styled.extent)
         }
         guard let cg else { return }
