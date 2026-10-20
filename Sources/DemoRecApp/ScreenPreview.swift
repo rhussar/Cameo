@@ -15,6 +15,9 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     private var stream: SCStream?
     private var generation = 0
     private var stage: Stage? // queue only
+    private var background: Background = .screen // queue only
+    private var compositor: Compositor? // queue only; reused so a static background is drawn once
+    private var compositorKey = "" // queue only
     private var canvas: CGSize? // queue only
     private var crop: CGRect? // queue only
     private var lastFrame: CIImage? // queue only
@@ -30,9 +33,10 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
 
     /// Styles and frames the preview like the final video. Re-renders the last frame, since a still screen sends no new ones.
     /// `zoom` false shows the screen unzoomed whatever the pointer does (e.g. while editing the crop).
-    func setLayout(stage: Stage?, canvas: CGSize?, crop: CGRect?, zoom: Bool) {
+    func setLayout(stage: Stage?, background: Background, canvas: CGSize?, crop: CGRect?, zoom: Bool) {
         queue.async {
             self.stage = stage
+            self.background = background
             self.canvas = canvas
             self.crop = crop
             self.zoomEnabled = zoom
@@ -122,13 +126,19 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         if stage != nil || canvas != nil || crop != nil || zoom != .none {
             var layout = Layout()
             layout.stage = stage
+            layout.background = background
             layout.crop = crop
             // Same shape as the output, at preview resolution.
             if let canvas {
                 let s = min(1, 1600 / max(canvas.width, canvas.height))
                 layout.canvas = CGSize(width: (canvas.width * s).rounded(), height: (canvas.height * s).rounded())
             }
-            let styled = Compositor(layout: layout).compose(screen: frame, cutout: nil, zoom: zoom)
+            let key = (try? JSONEncoder().encode(layout)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+            if compositor == nil || key != compositorKey {
+                compositor = Compositor(layout: layout)
+                compositorKey = key
+            }
+            let styled = compositor!.compose(screen: frame, cutout: nil, zoom: zoom)
             cg = ciContext.createCGImage(styled, from: styled.extent)
         }
         guard let cg else { return }

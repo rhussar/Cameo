@@ -24,7 +24,8 @@ public final class Transcoder {
         // Zoom works in the cropped screen's coordinates.
         self.cursor = layout.crop.flatMap { cursor?.cropped(to: $0) } ?? cursor
         self.zoom = zoom
-        self.maskEnabled = maskEnabled
+        // A glass tile shows the whole camera picture, so there's nothing to cut out.
+        self.maskEnabled = maskEnabled && layout.presenter.needsMask
         self.fps = fps
         self.outputHeight = outputHeight
         self.masker = PersonMasker(quality: quality)

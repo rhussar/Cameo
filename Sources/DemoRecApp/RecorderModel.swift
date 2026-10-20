@@ -28,6 +28,7 @@ final class RecorderModel {
     var unfinished: [URL] = []
     var previewHovering = false
     var lookOpen = false
+    var sceneOpen = false
     /// Window content width, so controls can grow with a bigger window.
     var windowWidth: CGFloat = 1100
 
@@ -105,12 +106,51 @@ final class RecorderModel {
             preview.setMirror(mirror)
         }
     }
-    /// Present the screen as a rounded, tilted card over a blurred backdrop.
-    var styled: Bool {
+    /// How the screen sits in the frame: flat, a straight card, or a tilted card.
+    var screenStyle: ScreenStyle {
         didSet {
-            UserDefaults.standard.set(styled, forKey: "styled")
+            UserDefaults.standard.set(screenStyle.rawValue, forKey: "screenStyle")
             updateScreenPreviewLayout()
         }
+    }
+    /// What's behind the screen card. Picking one for a flat screen puts the screen on a card so it shows.
+    var background: Background {
+        didSet {
+            if let data = try? JSONEncoder().encode(background) { UserDefaults.standard.set(data, forKey: "background") }
+            if background != .screen, screenStyle == .flat { screenStyle = .card }
+            updateScreenPreviewLayout()
+        }
+    }
+    /// How you appear: cutout or glass tile.
+    var presenter: Presenter {
+        didSet {
+            if let data = try? JSONEncoder().encode(presenter) { UserDefaults.standard.set(data, forKey: "presenter") }
+            preview.setMasking(presenter.needsMask)
+        }
+    }
+    /// The scene preset matching the current settings, if any.
+    var sceneName: String {
+        Scene.presets.first { $0.screen == screenStyle && $0.background == background && $0.presenter == presenter }?.name ?? "Custom"
+    }
+    func apply(_ scene: Scene) {
+        presenter = scene.presenter
+        background = scene.background
+        screenStyle = scene.screen
+    }
+    /// Lets you pick a picture for the background.
+    func chooseBackgroundImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a picture for the background"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let blur: Double = if case .image(_, let b) = background { b } else { 0.012 }
+        background = .image(path: url.path, blur: blur)
+    }
+    /// Soften or sharpen the background picture.
+    var backgroundBlurred: Bool {
+        get { if case .image(_, let b) = background { b > 0 } else { false } }
+        set { if case .image(let path, _) = background { background = .image(path: path, blur: newValue ? 0.012 : 0) } }
     }
     /// Press to zoom in on the pointer and follow it, press again to zoom out. Works anywhere while DemoRec is open.
     var zoomShortcut: Shortcut {
@@ -195,18 +235,13 @@ final class RecorderModel {
     private func updateScreenPreviewLayout() {
         screenPreview.liveZoom.reset() // the zoom works in the crop's coordinates
         if cropping {
-            screenPreview.setLayout(stage: nil, canvas: nil, crop: nil, zoom: false)
+            screenPreview.setLayout(stage: nil, background: .screen, canvas: nil, crop: nil, zoom: false)
         } else {
-            screenPreview.setLayout(stage: stage, canvas: format.size, crop: crop, zoom: true)
+            screenPreview.setLayout(stage: stage, background: background, canvas: format.size, crop: crop, zoom: true)
         }
     }
 
-    private var stage: Stage? {
-        guard styled else { return nil }
-        var stage = Stage()
-        stage.tilt = tilt
-        return stage
-    }
+    var stage: Stage? { screenStyle.stage(tilt: tilt) }
 
     /// Recording, or making the video: quitting or closing now would lose it.
     var isBusy: Bool {
@@ -278,7 +313,10 @@ final class RecorderModel {
         position = (d.array(forKey: "position") as? [Double]).flatMap { $0.count == 2 ? CGPoint(x: $0[0], y: $0[1]) : nil }
         size = d.object(forKey: "size") as? Double ?? 0.35
         mirror = d.bool(forKey: "mirror")
-        styled = d.bool(forKey: "styled")
+        // "styled" was the old on/off for the tilted card.
+        screenStyle = d.string(forKey: "screenStyle").flatMap(ScreenStyle.init(rawValue:)) ?? (d.bool(forKey: "styled") ? .tilted : .flat)
+        background = d.data(forKey: "background").flatMap { try? JSONDecoder().decode(Background.self, from: $0) } ?? .screen
+        presenter = d.data(forKey: "presenter").flatMap { try? JSONDecoder().decode(Presenter.self, from: $0) } ?? Presenter()
         tilt = d.object(forKey: "tilt") as? Double ?? Stage().tilt
         zoomShortcut = d.data(forKey: "zoomShortcut").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .defaultZoom
         cameraID = d.string(forKey: "cameraID")
@@ -290,6 +328,7 @@ final class RecorderModel {
         look = d.data(forKey: "look").flatMap { try? JSONDecoder().decode(Look.self, from: $0) } ?? Look()
         preview.setMirror(mirror)
         preview.setLook(look)
+        preview.setMasking(presenter.needsMask)
         updateScreenPreviewLayout()
         screenPreview.liveZoom.setSettings(Self.zoomSettings)
         preview.onImage = { [weak self] in self?.previewImage = $0 }
@@ -674,6 +713,8 @@ final class RecorderModel {
         layout.canvas = format.size
         layout.look = look
         layout.position = position
+        layout.background = background
+        layout.presenter = presenter
         return layout
     }
 

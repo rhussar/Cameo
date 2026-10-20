@@ -17,6 +17,7 @@ final class CameraPreview: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     private let ciContext: CIContext = MTLCreateSystemDefaultDevice().map { CIContext(mtlDevice: $0) } ?? CIContext()
     private var mirror = false // frameQueue only
     private var look = Look() // frameQueue only
+    private var masking = true // frameQueue only
     private var frameIndex = 0 // frameQueue only
 
     override init() {
@@ -32,6 +33,11 @@ final class CameraPreview: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
 
     func setLook(_ value: Look) {
         frameQueue.async { self.look = value }
+    }
+
+    /// Off for a glass tile, which shows the whole picture, so no segmentation runs.
+    func setMasking(_ value: Bool) {
+        frameQueue.async { self.masking = value }
     }
 
     func start(deviceID: String?) {
@@ -86,7 +92,7 @@ final class CameraPreview: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     }
 
     private func process(_ pb: CVPixelBuffer) {
-        let mask = try? masker.mask(for: pb)
+        let mask = masking ? try? masker.mask(for: pb) : nil
         var layout = Layout(feather: 1.5, mirror: mirror)
         layout.look = look
         let cutout = Compositor(layout: layout).cutout(camera: CIImage(cvPixelBuffer: pb), mask: mask)

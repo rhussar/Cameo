@@ -82,6 +82,7 @@ final class LivePreview {
         let person = CameraPreview()
         person.setMirror(model.mirror)
         person.setLook(model.look)
+        person.setMasking(model.presenter.needsMask)
         person.onImage = { [weak self] in self?.personImage = $0 }
         camera?.onVideoFrame = { [person] in person.feed($0) }
         self.person = person
@@ -89,12 +90,7 @@ final class LivePreview {
         let screen = ScreenPreview()
         screen.liveZoom.setSettings(RecorderModel.zoomSettings)
         zoomLink.attach(screen.liveZoom)
-        var stage: Stage?
-        if model.styled {
-            stage = Stage()
-            stage?.tilt = model.tilt
-        }
-        screen.setLayout(stage: stage, canvas: model.format.size, crop: model.crop, zoom: true)
+        screen.setLayout(stage: model.stage, background: model.background, canvas: model.format.size, crop: model.crop, zoom: true)
         screen.onImage = { [weak self] in self?.screenImage = $0 }
         let target = target
         Task { try? await screen.start(target: target) }
@@ -193,9 +189,8 @@ private struct LivePreviewView: View {
                 }
                 if let person = preview.personImage {
                     let h = geo.size.height * model.size
-                    let w = h * CGFloat(person.width) / CGFloat(person.height)
-                    Image(decorative: person, scale: 1).resizable()
-                        .frame(width: w, height: h)
+                    let w = PresenterTile.width(for: h, image: person, presenter: model.presenter)
+                    PresenterTile(image: person, presenter: model.presenter, width: w, height: h)
                         .position(center(w: w, h: h, in: geo.size))
                 }
             }

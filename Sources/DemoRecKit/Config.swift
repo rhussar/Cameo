@@ -37,6 +37,11 @@ public struct Layout: Sendable, Codable {
     /// The part of the screen recording to show, as fractions of it with a top-left origin (like CursorTrack).
     /// nil = all of it. Applied before zoom, staging and fitting, so everything else treats the crop as the screen.
     public var crop: CGRect? = nil
+    /// What fills the frame behind the screen card (and shows through a glass tile). Only visible when the screen
+    /// doesn't cover the whole frame: a staged card, or a canvas of a different shape.
+    public var background: Background = .screen
+    /// How you appear: a background-removed cutout, or the whole camera picture in a glass tile.
+    public var presenter = Presenter()
 
     public init(corner: Corner = .bottomRight, scale: Double = 0.35, margin: Double = 24, feather: Double = 2, mirror: Bool = false) {
         self.corner = corner
@@ -45,6 +50,147 @@ public struct Layout: Sendable, Codable {
         self.feather = feather
         self.mirror = mirror
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case corner, scale, margin, feather, mirror, stage, canvas, look, position, crop, background, presenter
+    }
+
+    /// Layouts saved by older versions lack the newer keys; they take the defaults.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        corner = try c.decodeIfPresent(Corner.self, forKey: .corner) ?? .bottomRight
+        scale = try c.decodeIfPresent(Double.self, forKey: .scale) ?? 0.35
+        margin = try c.decodeIfPresent(Double.self, forKey: .margin) ?? 24
+        feather = try c.decodeIfPresent(Double.self, forKey: .feather) ?? 2
+        mirror = try c.decodeIfPresent(Bool.self, forKey: .mirror) ?? false
+        stage = try c.decodeIfPresent(Stage.self, forKey: .stage)
+        canvas = try c.decodeIfPresent(CGSize.self, forKey: .canvas)
+        look = try c.decodeIfPresent(Look.self, forKey: .look) ?? Look()
+        position = try c.decodeIfPresent(CGPoint.self, forKey: .position)
+        crop = try c.decodeIfPresent(CGRect.self, forKey: .crop)
+        background = try c.decodeIfPresent(Background.self, forKey: .background) ?? .screen
+        presenter = try c.decodeIfPresent(Presenter.self, forKey: .presenter) ?? Presenter()
+    }
+}
+
+/// What fills the frame behind the screen.
+public enum Background: Sendable, Codable, Equatable, Hashable {
+    /// A zoomed, blurred, dimmed copy of the screen itself (the classic look).
+    case screen
+    /// One of `BackgroundPreset.all`, by name: soft colour washes like a blurred wallpaper.
+    case preset(String)
+    /// A picture of your own, scaled to cover the frame. `blur` is a sigma as a fraction of the frame height; 0 = sharp.
+    case image(path: String, blur: Double)
+
+    public var preset: BackgroundPreset? {
+        if case .preset(let name) = self { return BackgroundPreset.named(name) }
+        return nil
+    }
+
+    /// A name for menus and the CLI: "screen", a preset name, or "image".
+    public var label: String {
+        switch self {
+        case .screen: "Screen"
+        case .preset(let name): name
+        case .image: "Image"
+        }
+    }
+}
+
+/// A soft wash of a few colour blobs over a base colour, like a blurred wallpaper. Positions and radii are
+/// fractions of the frame (x left to right, y bottom to top, radius of the frame's long side).
+public struct BackgroundPreset: Sendable, Equatable, Hashable {
+    public struct RGB: Sendable, Equatable, Hashable {
+        public var r: Double, g: Double, b: Double
+        public init(_ r: Double, _ g: Double, _ b: Double) { self.r = r; self.g = g; self.b = b }
+    }
+    public struct Blob: Sendable, Equatable, Hashable {
+        public var color: RGB
+        public var x: Double, y: Double, radius: Double
+        public init(_ color: RGB, x: Double, y: Double, radius: Double) { self.color = color; self.x = x; self.y = y; self.radius = radius }
+    }
+    public var name: String
+    public var base: RGB
+    public var blobs: [Blob]
+
+    /// The colours, base first, for drawing a swatch.
+    public var colors: [RGB] { [base] + blobs.map(\.color) }
+
+    public static func named(_ name: String) -> BackgroundPreset? {
+        all.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+    }
+
+    public static let all: [BackgroundPreset] = [
+        BackgroundPreset(name: "Meadow", base: RGB(0.44, 0.52, 0.30), blobs: [
+            Blob(RGB(0.70, 0.76, 0.46), x: 0.15, y: 0.85, radius: 0.45),
+            Blob(RGB(0.30, 0.38, 0.18), x: 0.85, y: 0.15, radius: 0.6),
+            Blob(RGB(0.62, 0.68, 0.40), x: 0.6, y: 0.6, radius: 0.35),
+        ]),
+        BackgroundPreset(name: "Peach", base: RGB(0.86, 0.62, 0.48), blobs: [
+            Blob(RGB(0.45, 0.55, 0.70), x: 0.1, y: 0.9, radius: 0.5),
+            Blob(RGB(0.95, 0.45, 0.40), x: 0.9, y: 0.3, radius: 0.5),
+            Blob(RGB(0.98, 0.88, 0.70), x: 0.45, y: 0.4, radius: 0.25),
+        ]),
+        BackgroundPreset(name: "Sunset", base: RGB(0.92, 0.50, 0.36), blobs: [
+            Blob(RGB(0.98, 0.78, 0.40), x: 0.2, y: 0.8, radius: 0.5),
+            Blob(RGB(0.55, 0.25, 0.50), x: 0.85, y: 0.15, radius: 0.6),
+            Blob(RGB(0.98, 0.45, 0.55), x: 0.55, y: 0.5, radius: 0.35),
+        ]),
+        BackgroundPreset(name: "Ocean", base: RGB(0.10, 0.32, 0.52), blobs: [
+            Blob(RGB(0.30, 0.75, 0.80), x: 0.2, y: 0.8, radius: 0.5),
+            Blob(RGB(0.05, 0.12, 0.30), x: 0.9, y: 0.1, radius: 0.6),
+            Blob(RGB(0.45, 0.65, 0.90), x: 0.6, y: 0.55, radius: 0.35),
+        ]),
+        BackgroundPreset(name: "Dusk", base: RGB(0.22, 0.16, 0.38), blobs: [
+            Blob(RGB(0.72, 0.30, 0.60), x: 0.15, y: 0.85, radius: 0.5),
+            Blob(RGB(0.08, 0.06, 0.18), x: 0.9, y: 0.1, radius: 0.6),
+            Blob(RGB(0.35, 0.30, 0.70), x: 0.6, y: 0.5, radius: 0.4),
+        ]),
+        BackgroundPreset(name: "Graphite", base: RGB(0.14, 0.14, 0.15), blobs: [
+            Blob(RGB(0.26, 0.26, 0.28), x: 0.2, y: 0.85, radius: 0.5),
+            Blob(RGB(0.06, 0.06, 0.07), x: 0.9, y: 0.1, radius: 0.6),
+        ]),
+    ]
+}
+
+/// How you appear in the video.
+public struct Presenter: Sendable, Codable, Equatable, Hashable {
+    public enum Style: String, CaseIterable, Sendable, Codable {
+        /// You, cut out of the camera picture, floating over the screen.
+        case cutout
+        /// The whole camera picture in a rounded glass tile with a soft rim and shadow.
+        case glass
+    }
+    public enum Tile: String, CaseIterable, Sendable, Codable {
+        case portrait, square, landscape
+
+        /// Width / height.
+        public var aspect: Double {
+            switch self {
+            case .portrait: 0.68
+            case .square: 1
+            case .landscape: 16.0 / 9.0
+            }
+        }
+        public var name: String {
+            switch self {
+            case .portrait: "Portrait"
+            case .square: "Square"
+            case .landscape: "Landscape"
+            }
+        }
+    }
+    public var style: Style = .cutout
+    /// Shape of the glass tile; the camera picture is centre-cropped to it.
+    public var tile: Tile = .portrait
+
+    public init(style: Style = .cutout, tile: Tile = .portrait) {
+        self.style = style
+        self.tile = tile
+    }
+
+    /// Whether person segmentation is needed at all.
+    public var needsMask: Bool { style == .cutout }
 }
 
 extension Layout {
@@ -87,6 +233,68 @@ public struct Stage: Sendable, Codable {
     public var shadowOffset: Double = 0.02
 
     public init() {}
+
+    /// The classic look: a slightly tilted card.
+    public static let tilted = Stage()
+
+    /// A straight, padded card with softer corners, sitting on the background.
+    public static var card: Stage {
+        var s = Stage()
+        s.tilt = 0
+        s.cardX = 0.5
+        s.inset = 0.9
+        s.cornerRadius = 0.02
+        s.shadowOpacity = 0.45
+        s.shadowBlur = 0.04
+        s.shadowOffset = 0.015
+        return s
+    }
+}
+
+/// How the screen sits in the frame.
+public enum ScreenStyle: String, CaseIterable, Sendable, Codable {
+    /// Fills the frame; nothing around it.
+    case flat
+    /// A straight rounded card with padding, over the background.
+    case card
+    /// A rounded card turned a few degrees, over the background.
+    case tilted
+
+    public var name: String {
+        switch self {
+        case .flat: "Flat"
+        case .card: "Card"
+        case .tilted: "Tilted"
+        }
+    }
+
+    /// The stage for this style; nil for flat.
+    public func stage(tilt: Double) -> Stage? {
+        switch self {
+        case .flat: return nil
+        case .card: return .card
+        case .tilted:
+            var s = Stage.tilted
+            s.tilt = tilt
+            return s
+        }
+    }
+}
+
+/// A whole look at once: how the screen sits, what's behind it, and how you appear.
+public struct Scene: Sendable, Equatable {
+    public var name: String
+    public var screen: ScreenStyle
+    public var background: Background
+    public var presenter: Presenter
+
+    public static let presets: [Scene] = [
+        Scene(name: "Classic", screen: .flat, background: .screen, presenter: Presenter(style: .cutout)),
+        Scene(name: "Studio", screen: .tilted, background: .screen, presenter: Presenter(style: .cutout)),
+        Scene(name: "Showcase", screen: .card, background: .preset("Meadow"), presenter: Presenter(style: .glass, tile: .portrait)),
+        Scene(name: "Desk", screen: .card, background: .preset("Peach"), presenter: Presenter(style: .glass, tile: .landscape)),
+        Scene(name: "Night", screen: .card, background: .preset("Graphite"), presenter: Presenter(style: .cutout)),
+    ]
 }
 
 /// Colour adjustments for the presenter cutout.

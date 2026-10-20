@@ -1,10 +1,15 @@
 import CoreImage
 import CoreImage.CIFilterBuiltins
+import Foundation
 
 /// Cuts the presenter out of the camera frame and places the cutout over the screen frame.
 /// Pure CoreImage; takes CIImages and returns a CIImage so it works for files now and live frames later.
 public final class Compositor {
     private let layout: Layout
+    /// A preset or picture background is the same every frame, so it's drawn once per frame size and kept as pixels.
+    private let backgroundLock = NSLock()
+    private var backgroundCache: (size: CGSize, image: CIImage)?
+    private lazy var backgroundContext = CIContext(options: [.cacheIntermediates: false])
 
     public init(layout: Layout) {
         self.layout = layout
@@ -77,7 +82,10 @@ public final class Compositor {
             base = letterbox(screen: screen, frame: frame)
         }
         guard let cutout else { return base }
-        return place(cutout: cutout, over: base)
+        switch layout.presenter.style {
+        case .cutout: return place(cutout: cutout, over: base)
+        case .glass: return placeGlass(camera: cutout, over: base)
+        }
     }
 
     /// The part of the screen in view, scaled up to fill the screen's own size.
@@ -115,8 +123,74 @@ public final class Compositor {
         return out.cropped(to: image.extent)
     }
 
-    /// The screen scaled to cover `frame`, zoomed, blurred and dimmed.
+    /// What's behind the screen: the chosen background, or the screen itself zoomed, blurred and dimmed.
     private func backdrop(screen: CIImage, frame: CGRect, zoom: CGFloat, blur: CGFloat, dim: CGFloat) -> CIImage {
+        switch layout.background {
+        case .screen: return blurredScreen(screen: screen, frame: frame, zoom: zoom, blur: blur, dim: dim)
+        case .preset, .image: return staticBackground(frame: frame)
+        }
+    }
+
+    /// The preset wash or picture for this frame size, drawn once and kept.
+    private func staticBackground(frame: CGRect) -> CIImage {
+        backgroundLock.lock(); defer { backgroundLock.unlock() }
+        if let cached = backgroundCache, cached.size == frame.size { return cached.image }
+        let drawn = Self.drawBackground(layout.background, frame: frame)
+        // Materialise so the per-frame cost is one texture, not a gradient stack.
+        let image: CIImage
+        if let cg = backgroundContext.createCGImage(drawn, from: frame, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)) {
+            image = CIImage(cgImage: cg)
+        } else {
+            image = drawn
+        }
+        backgroundCache = (frame.size, image)
+        return image
+    }
+
+    /// Draws a background to fill `frame`: a preset's colour blobs over its base, or a picture scaled to cover.
+    /// Unknown presets and unreadable pictures fall back to graphite so the video still renders.
+    static func drawBackground(_ background: Background, frame: CGRect) -> CIImage {
+        let W = frame.width, H = frame.height
+        switch background {
+        case .screen:
+            return CIImage(color: .black).cropped(to: frame)
+        case .image(let path, let blur):
+            guard let picture = CIImage(contentsOf: URL(fileURLWithPath: path), options: [.applyOrientationProperty: true]),
+                  picture.extent.width > 0, picture.extent.height > 0 else {
+                return drawBackground(.preset("Graphite"), frame: frame)
+            }
+            let p = picture.transformed(by: CGAffineTransform(translationX: -picture.extent.minX, y: -picture.extent.minY))
+            let cover = max(W / p.extent.width, H / p.extent.height)
+            var out = p.transformed(by: CGAffineTransform(scaleX: cover, y: cover))
+            out = out.transformed(by: CGAffineTransform(translationX: (W - out.extent.width) / 2, y: (H - out.extent.height) / 2))
+            if blur > 0 {
+                out = out.clampedToExtent().applyingGaussianBlur(sigma: blur * H)
+            }
+            return out.cropped(to: frame)
+        case .preset(let name):
+            let preset = BackgroundPreset.named(name) ?? BackgroundPreset.all.last!
+            func color(_ c: BackgroundPreset.RGB, alpha: CGFloat = 1) -> CIColor {
+                CIColor(red: CGFloat(c.r), green: CGFloat(c.g), blue: CGFloat(c.b), alpha: alpha)
+            }
+            var out = CIImage(color: color(preset.base)).cropped(to: frame)
+            let long = max(W, H)
+            for blob in preset.blobs {
+                let g = CIFilter.radialGradient()
+                g.center = CGPoint(x: CGFloat(blob.x) * W, y: CGFloat(blob.y) * H)
+                g.radius0 = 0
+                g.radius1 = Float(CGFloat(blob.radius) * long)
+                g.color0 = color(blob.color, alpha: 0.95)
+                g.color1 = color(blob.color, alpha: 0)
+                if let image = g.outputImage {
+                    out = image.cropped(to: frame).composited(over: out)
+                }
+            }
+            return out
+        }
+    }
+
+    /// The screen scaled to cover `frame`, zoomed, blurred and dimmed.
+    private func blurredScreen(screen: CIImage, frame: CGRect, zoom: CGFloat, blur: CGFloat, dim: CGFloat) -> CIImage {
         let W = frame.width
         let H = frame.height
         let cover = max(W / screen.extent.width, H / screen.extent.height) * zoom
@@ -252,5 +326,96 @@ public final class Compositor {
         } }
         person = person.transformed(by: CGAffineTransform(translationX: x, y: y))
         return person.composited(over: screen).cropped(to: screen.extent)
+    }
+
+    /// The camera picture in a rounded glass tile: the backdrop shows through a frosted rim around the picture,
+    /// with a thin bright edge and a soft shadow, like a floating pane. Sized and positioned like the cutout.
+    private func placeGlass(camera: CIImage, over base: CIImage) -> CIImage {
+        let W = base.extent.width
+        let H = base.extent.height
+        let tileH = CGFloat(layout.scale) * H
+        let tileW = (tileH * CGFloat(layout.presenter.tile.aspect)).rounded()
+        let margin = layout.margin
+        let x: CGFloat
+        let y: CGFloat
+        if let p = layout.position {
+            x = min(max(p.x, 0), 1) * W - tileW / 2
+            y = min(max(p.y, 0), 1) * max(H - tileH, 0)
+        } else { switch layout.corner {
+        case .bottomRight: x = W - tileW - margin; y = margin
+        case .bottomLeft: x = margin; y = margin
+        case .topRight: x = W - tileW - margin; y = H - tileH - margin
+        case .topLeft: x = margin; y = H - tileH - margin
+        } }
+        let tile = CGRect(x: x.rounded(), y: y.rounded(), width: tileW, height: tileH)
+        let rim = max(2, (0.018 * tileH).rounded())
+        let outerRadius = 0.075 * tileH
+        let inner = tile.insetBy(dx: rim, dy: rim)
+        let innerRadius = max(outerRadius - rim, 1)
+
+        func rounded(_ rect: CGRect, _ radius: CGFloat) -> CIImage {
+            let rr = CIFilter.roundedRectangleGenerator()
+            rr.extent = rect
+            rr.radius = Float(radius)
+            rr.color = .white
+            return (rr.outputImage ?? CIImage(color: .white)).cropped(to: rect)
+        }
+        func clipped(_ image: CIImage, to mask: CIImage, in rect: CGRect) -> CIImage {
+            let blend = CIFilter.blendWithMask()
+            blend.inputImage = image.cropped(to: rect)
+            blend.backgroundImage = CIImage(color: .clear).cropped(to: rect)
+            blend.maskImage = mask
+            return (blend.outputImage ?? image).cropped(to: rect)
+        }
+        let outerMask = rounded(tile, outerRadius)
+        let innerMask = rounded(inner, innerRadius)
+
+        var result = base
+
+        // Shadow under the pane.
+        let shadowSigma = 0.025 * H
+        let ink = clipped(CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.45)), to: outerMask, in: tile)
+        let shadow = ink.clampedToExtent().applyingGaussianBlur(sigma: shadowSigma)
+            .transformed(by: CGAffineTransform(translationX: 0, y: -0.012 * H))
+            .cropped(to: base.extent)
+        result = shadow.composited(over: result)
+
+        // Frosted glass: the backdrop under the tile, blurred and lightened, clipped to the pane.
+        let reach = shadowSigma * 3
+        let sample = base.cropped(to: tile.insetBy(dx: -reach, dy: -reach).intersection(base.extent)).clampedToExtent()
+        let down: CGFloat = 4
+        var frost = sample
+            .transformed(by: CGAffineTransform(scaleX: 1 / down, y: 1 / down))
+            .applyingGaussianBlur(sigma: 0.02 * H / down)
+            .transformed(by: CGAffineTransform(scaleX: down, y: down))
+            .cropped(to: tile)
+        frost = CIImage(color: CIColor(red: 1, green: 1, blue: 1, alpha: 0.28)).cropped(to: tile).composited(over: frost)
+        result = clipped(frost, to: outerMask, in: tile).composited(over: result)
+
+        // The camera picture, centre-cropped to the pane's shape.
+        let cam = camera.transformed(by: CGAffineTransform(translationX: -camera.extent.minX, y: -camera.extent.minY))
+        let cover = max(inner.width / cam.extent.width, inner.height / cam.extent.height)
+        var picture = cam.transformed(by: CGAffineTransform(scaleX: cover, y: cover))
+        picture = picture.transformed(by: CGAffineTransform(translationX: inner.midX - picture.extent.width / 2,
+                                                            y: inner.midY - picture.extent.height / 2))
+        result = clipped(picture, to: innerMask, in: inner).composited(over: result)
+
+        // Bright edge: a hairline of white along the outside, brighter towards the top.
+        let hair = max(1, (0.004 * tileH).rounded())
+        let edgeMask = rounded(tile.insetBy(dx: hair, dy: hair), max(outerRadius - hair, 1))
+        let shine = CIFilter.linearGradient()
+        shine.point0 = CGPoint(x: tile.midX, y: tile.maxY)
+        shine.point1 = CGPoint(x: tile.midX, y: tile.minY)
+        shine.color0 = CIColor(red: 1, green: 1, blue: 1, alpha: 0.85)
+        shine.color1 = CIColor(red: 1, green: 1, blue: 1, alpha: 0.35)
+        let ring = clipped(shine.outputImage ?? CIImage(color: .white), to: outerMask, in: tile)
+        // Cut the inside out: keep the ring only where the inset mask is dark.
+        let cut = CIFilter.blendWithMask()
+        cut.inputImage = CIImage(color: .clear).cropped(to: tile)
+        cut.backgroundImage = ring
+        cut.maskImage = edgeMask
+        result = (cut.outputImage ?? ring).cropped(to: tile).composited(over: result)
+
+        return result.cropped(to: base.extent)
     }
 }

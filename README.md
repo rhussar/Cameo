@@ -26,6 +26,17 @@ LinkedIn 1080p (16:9), square (1:1) or portrait (4:5). When your screen is a dif
 presets (Natural, Bright, Warm, Cool, Vivid, Mono) and brightness / contrast / colour / warmth
 sliders for you; the preview updates live. The CLI takes the same as `--format` and `--look`.
 
+**Scene** picks the whole look at once: *Classic* (flat screen, you cut out in a corner), *Studio* (a tilted
+card over a blurred copy of the screen), *Showcase* (a straight padded card on a soft green wash, you in a
+portrait glass tile), *Desk* (the same on a peach wash with a landscape tile) and *Night*. Under the presets
+are the three choices they're made of: **Screen** flat, card or tilted (tilted gets a tilt slider); **Background**
+a blurred copy of the screen, one of six colour washes, or a picture of your own (**Picture…**, with a
+soften toggle); and **You** as a cutout or a **glass tile** (portrait, square or landscape) that shows the
+whole camera picture in a rounded frosted frame with a bright rim and a soft shadow. A glass tile skips
+person segmentation, so it's also the lightest on the Mac. The background only shows where the screen
+doesn't fill the frame, so picking one for a flat screen puts the screen on a card. The CLI has the same
+as `--scene`, `--background`, `--presenter`, `--tile` and `--card`.
+
 **Crop** (the crop button next to the screen picker) shows only part of what you record, handy on a big
 or ultrawide monitor. The preview switches to the whole screen with a box over it: drag the box to move it
 (it snaps to the edges and the middle), drag a corner to resize it, then **Done**. With a fixed video shape
@@ -106,6 +117,12 @@ relative to the output frame height.
 
 | flag | default | meaning |
 |---|---|---|
+| `--scene` | – | a whole look at once: classic, studio, showcase, desk, night (the flags below override its parts) |
+| `--background` | screen | screen (a blurred copy of it), a wash (meadow, peach, sunset, ocean, dusk, graphite), or the path of a picture |
+| `--background-blur` | `0.012` | blur for a background picture, 0 = sharp |
+| `--presenter` | cutout | cutout, or glass (the whole camera picture in a glass tile; no segmentation) |
+| `--tile` | portrait | glass tile shape: portrait, square, landscape |
+| `--card` | off | straight padded card, no tilt |
 | `--flat` | off | plain full-frame screen, no staging |
 | `--inset` | `0.88` | card height as a fraction of the frame |
 | `--card-x` | `0.47` | horizontal position of the card centre, 0-1 |

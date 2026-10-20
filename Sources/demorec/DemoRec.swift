@@ -95,6 +95,12 @@ struct Composite: AsyncParsableCommand {
     @Option(help: "Show only part of the screen: x,y,width,height as fractions of it from the top-left, e.g. 0.25,0,0.5,1.") var crop: String?
     @Option(help: "Look preset for you: \(Look.presets.map { $0.name.lowercased() }.joined(separator: ", ")).") var look: String = "natural"
 
+    @Option(help: "Whole scene at once: \(Scene.presets.map { $0.name.lowercased() }.joined(separator: ", ")). The options below override its parts.") var scene: String?
+    @Option(help: "Behind the screen card: screen (a blurred copy of it), a preset (\(BackgroundPreset.all.map { $0.name.lowercased() }.joined(separator: ", "))), or the path of a picture.") var background: String?
+    @Option(name: .customLong("background-blur"), help: "Blur for a background picture, as a fraction of the frame height. 0 = sharp.") var backgroundBlur: Double = 0.012
+    @Option(help: "How you appear: cutout, glass.") var presenter: Presenter.Style?
+    @Option(help: "Glass tile shape: portrait, square, landscape.") var tile: Presenter.Tile?
+    @Flag(help: "Straight padded card (no tilt) over the background.") var card = false
     @Flag(help: "Flat layout: full-frame screen with no backdrop, card or tilt.") var flat = false
     @Option(help: "Card height as a fraction of the frame height.") var inset: Double = 0.88
     @Option(name: .customLong("card-x"), help: "Horizontal position of the card centre, 0-1.") var cardX: Double = 0.47
@@ -124,7 +130,32 @@ struct Composite: AsyncParsableCommand {
             guard v.count == 4, v[2] > 0, v[3] > 0 else { throw DemoRecError("--crop needs x,y,width,height, e.g. 0.25,0,0.5,1") }
             layout.crop = CGRect(x: v[0], y: v[1], width: v[2], height: v[3])
         }
-        if !flat {
+        var screenStyle: ScreenStyle = flat ? .flat : card ? .card : .tilted
+        if let scene {
+            guard let s = Scene.presets.first(where: { $0.name.lowercased() == scene.lowercased() }) else {
+                throw DemoRecError("unknown scene \"\(scene)\"")
+            }
+            if !flat, !card { screenStyle = s.screen }
+            layout.background = s.background
+            layout.presenter = s.presenter
+        }
+        if let background {
+            if background.lowercased() == "screen" {
+                layout.background = .screen
+            } else if let p = BackgroundPreset.named(background) {
+                layout.background = .preset(p.name)
+            } else {
+                let path = NSString(string: background).expandingTildeInPath
+                guard FileManager.default.fileExists(atPath: path) else { throw DemoRecError("no such background preset or picture: \(background)") }
+                layout.background = .image(path: path, blur: backgroundBlur)
+            }
+        }
+        if let presenter { layout.presenter.style = presenter }
+        if let tile { layout.presenter.tile = tile }
+        switch screenStyle {
+        case .flat: break
+        case .card: layout.stage = .card
+        case .tilted:
             var stage = Stage()
             stage.inset = inset
             stage.cardX = cardX
@@ -157,6 +188,8 @@ func waitForInterrupt() async {
 }
 
 extension Corner: ExpressibleByArgument {}
+extension Presenter.Style: ExpressibleByArgument {}
+extension Presenter.Tile: ExpressibleByArgument {}
 extension MaskQuality: ExpressibleByArgument {}
 extension OutputFormat: ExpressibleByArgument {}
 extension ZoomStrength: ExpressibleByArgument {}

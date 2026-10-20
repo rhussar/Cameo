@@ -131,15 +131,11 @@ private struct BottomBar: View {
         }
     }
 
-    /// How the screen looks and moves.
+    /// How the video is put together, and how the screen moves.
     private var effectsGroup: some View {
-        ControlGroupBox(title: "Style") {
-            Toggle(isOn: $model.styled) {
-                Image(systemName: "rectangle.on.rectangle.angled")
-            }
-            .toggleStyle(.button)
-            .help("Styled: screen as a tilted card over a blurred backdrop")
-            if model.styled {
+        ControlGroupBox(title: "Scene") {
+            SceneButton(model: model)
+            if model.screenStyle == .tilted {
                 TiltSlider(tilt: $model.tilt, width: wide ? 130 : 90)
             }
             ZoomKeyButton(model: model)
@@ -276,6 +272,143 @@ private struct FormatPicker: View {
             Text(f.name)
             Text(f.note)
         }
+    }
+}
+
+/// Scene presets, and the three choices behind them: how the screen sits, what's behind it, how you appear.
+private struct SceneButton: View {
+    @Bindable var model: RecorderModel
+
+    var body: some View {
+        Button {
+            model.sceneOpen.toggle()
+        } label: {
+            Label(model.sceneName, systemImage: "rectangle.on.rectangle.angled")
+        }
+        .fixedSize()
+        .help("Scene: how the screen, background and you are arranged")
+        .popover(isPresented: $model.sceneOpen, arrowEdge: .top) {
+            ScenePanel(model: model)
+        }
+    }
+}
+
+private struct ScenePanel: View {
+    @Bindable var model: RecorderModel
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Scene").font(.headline)
+            HStack(spacing: 8) {
+                ForEach(Scene.presets, id: \.name) { scene in
+                    let selected = model.sceneName == scene.name
+                    Button {
+                        withAnimation(.easeOut(duration: 0.15)) { model.apply(scene) }
+                    } label: {
+                        Text(scene.name).fixedSize()
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(selected ? .accentColor : nil)
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor, lineWidth: selected ? 1.5 : 0))
+                }
+            }
+            Divider()
+
+            row("Screen") {
+                Picker("Screen", selection: $model.screenStyle) {
+                    ForEach(ScreenStyle.allCases, id: \.self) { Text($0.name).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden()
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Background").font(.subheadline).foregroundStyle(.secondary)
+                LazyVGrid(columns: columns, spacing: 8) {
+                    swatch(.screen, title: "Screen")
+                    ForEach(BackgroundPreset.all, id: \.name) { p in
+                        swatch(.preset(p.name), title: p.name)
+                    }
+                    imageSwatch
+                }
+                if case .image = model.background {
+                    Toggle("Soften the picture", isOn: $model.backgroundBlurred).font(.caption)
+                }
+                if model.screenStyle == .flat, model.background != .screen {
+                    Text("Shows around the screen when it doesn't fill the frame.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Divider()
+
+            row("You") {
+                Picker("You", selection: $model.presenter.style) {
+                    Text("Cutout").tag(Presenter.Style.cutout)
+                    Text("Glass tile").tag(Presenter.Style.glass)
+                }
+                .pickerStyle(.segmented).labelsHidden()
+            }
+            if model.presenter.style == .glass {
+                row("Tile") {
+                    Picker("Tile", selection: $model.presenter.tile) {
+                        ForEach(Presenter.Tile.allCases, id: \.self) { Text($0.name).tag($0) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
+                }
+            }
+            Text("Shows live in the preview").font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .frame(width: 430)
+        .controlSize(.regular)
+    }
+
+    private func row<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 10) {
+            Text(title).font(.subheadline).foregroundStyle(.secondary).frame(width: 72, alignment: .leading)
+            content()
+        }
+    }
+
+    private func swatch(_ background: Background, title: String) -> some View {
+        let selected = model.background == background
+        return Button {
+            withAnimation(.easeOut(duration: 0.15)) { model.background = background }
+        } label: {
+            VStack(spacing: 4) {
+                BackgroundSwatch(background: background)
+                    .frame(height: 40)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(selected ? Color.accentColor : .white.opacity(0.12), lineWidth: selected ? 2 : 1))
+                Text(title).font(.caption2).lineLimit(1)
+            }
+        }
+        .buttonStyle(.plain)
+        .help(title)
+    }
+
+    /// Your own picture: the current one if there is one, else a prompt to pick.
+    private var imageSwatch: some View {
+        let current: Background? = if case .image = model.background { model.background } else { nil }
+        let selected = current != nil
+        return Button(action: model.chooseBackgroundImage) {
+            VStack(spacing: 4) {
+                Group {
+                    if let current { BackgroundSwatch(background: current) }
+                    else {
+                        Color.secondary.opacity(0.2)
+                            .overlay(Image(systemName: "photo.badge.plus").font(.system(size: 14)).foregroundStyle(.secondary))
+                    }
+                }
+                .frame(height: 40)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(selected ? Color.accentColor : .white.opacity(0.12), lineWidth: selected ? 2 : 1))
+                Text(selected ? "Picture…" : "Picture…").font(.caption2).lineLimit(1)
+            }
+        }
+        .buttonStyle(.plain)
+        .help("Choose a picture of your own")
     }
 }
 
@@ -441,7 +574,7 @@ private struct SizeSlider: View {
     }
 }
 
-/// Shown while Styled is on.
+/// Shown while the screen is a tilted card.
 private struct TiltSlider: View {
     @Binding var tilt: Double
     let width: CGFloat
@@ -576,10 +709,9 @@ private struct Preview: View {
             .padding(12)
             .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
         } else if let img = model.previewImage {
-            let w = h * CGFloat(img.width) / CGFloat(img.height)
+            let w = PresenterTile.width(for: h, image: img, presenter: model.presenter)
             let center = presenterCenter(w: w, h: h, margin: margin, in: size)
-            Image(decorative: img, scale: 1).resizable()
-                .frame(width: w, height: h)
+            PresenterTile(image: img, presenter: model.presenter, width: w, height: h)
                 .contentShape(Rectangle())
                 .pointerStyle(model.isSetup ? .grabIdle : .default)
                 .onTapGesture {} // a click on you isn't a corner pick
