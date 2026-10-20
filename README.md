@@ -30,7 +30,7 @@ sliders for you; the preview updates live. The CLI takes the same as `--format` 
 card over a blurred copy of the screen), *Showcase* (a straight padded card on a soft green wash, you in a
 portrait glass tile), *Desk* (the same on a peach wash with a landscape tile) and *Night*. Under the presets
 are the three choices they're made of: **Screen** flat, card or tilted (tilted gets a tilt slider); **Background**
-a blurred copy of the screen, one of six colour washes, or a picture of your own (**Picture…**, with a
+a blurred copy of the screen, one of fourteen washes (soft pastel cards with a fine grain, richer colour washes, and grey, cocoa and graphite), or a picture of your own (**Picture…**, with a
 soften toggle); and **You** as a cutout or a **glass tile** (portrait, square or landscape) that shows the
 whole camera picture in a rounded frosted frame with a bright rim and a soft shadow. A glass tile skips
 person segmentation, so it's also the lightest on the Mac. The background only shows where the screen
@@ -118,7 +118,7 @@ relative to the output frame height.
 | flag | default | meaning |
 |---|---|---|
 | `--scene` | – | a whole look at once: classic, studio, showcase, desk, night (the flags below override its parts) |
-| `--background` | screen | screen (a blurred copy of it), a wash (meadow, peach, sunset, ocean, dusk, graphite), or the path of a picture |
+| `--background` | screen | screen (a blurred copy of it), a wash (mist, sage, blush, lavender, sand, sky, meadow, peach, sunset, ocean, dusk, cocoa, grey, graphite), or the path of a picture |
 | `--background-blur` | `0.012` | blur for a background picture, 0 = sharp |
 | `--presenter` | cutout | cutout, or glass (the whole camera picture in a glass tile; no segmentation) |
 | `--tile` | portrait | glass tile shape: portrait, square, landscape |

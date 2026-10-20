@@ -179,10 +179,33 @@ public final class Compositor {
                 g.center = CGPoint(x: CGFloat(blob.x) * W, y: CGFloat(blob.y) * H)
                 g.radius0 = 0
                 g.radius1 = Float(CGFloat(blob.radius) * long)
-                g.color0 = color(blob.color, alpha: 0.95)
+                g.color0 = color(blob.color, alpha: 0.8)
                 g.color1 = color(blob.color, alpha: 0)
                 if let image = g.outputImage {
                     out = image.cropped(to: frame).composited(over: out)
+                }
+            }
+            if preset.grain > 0 {
+                // Fine single-pixel monochrome grain, added in display (sRGB) values so a strength means the same on a
+                // dark wash as a light one: `grain` is the peak-to-peak swing, so 0.055 spreads about ±4 code values.
+                // The generator's alpha is random too; settingAlphaOne makes it opaque without dividing by that alpha,
+                // which would blow near-transparent pixels up into bright specks.
+                let a = CGFloat(preset.grain)
+                let noise = CIFilter.randomGenerator().outputImage?
+                    .cropped(to: frame).settingAlphaOne(in: frame)
+                    .applyingFilter("CIColorMatrix", parameters: [
+                        "inputRVector": CIVector(x: a, y: 0, z: 0, w: 0),
+                        "inputGVector": CIVector(x: a, y: 0, z: 0, w: 0),
+                        "inputBVector": CIVector(x: a, y: 0, z: 0, w: 0),
+                        "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+                    ])
+                if let noise {
+                    // Lower the wash by half the swing, then add the noise back: the average colour is unchanged.
+                    let display = out.applyingFilter("CILinearToSRGBToneCurve")
+                        .applyingFilter("CIColorMatrix", parameters: ["inputBiasVector": CIVector(x: -a / 2, y: -a / 2, z: -a / 2, w: 0)])
+                    out = noise.applyingFilter("CILinearDodgeBlendMode", parameters: [kCIInputBackgroundImageKey: display])
+                        .applyingFilter("CISRGBToneCurveToLinear")
+                        .cropped(to: frame)
                 }
             }
             return out
@@ -397,7 +420,7 @@ public final class Compositor {
         cut.backgroundImage = ring
         cut.maskImage = insetMask
         let edge = (cut.outputImage ?? ring).cropped(to: tile)
-            .clampedToExtent().applyingGaussianBlur(sigma: hair * 0.6).cropped(to: tile)
+            .clampedToExtent().applyingGaussianBlur(sigma: hair * 1.2).cropped(to: tile)
         result = edge.composited(over: result)
 
         return result.cropped(to: base.extent)

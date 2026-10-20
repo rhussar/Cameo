@@ -112,6 +112,10 @@ public struct BackgroundPreset: Sendable, Equatable, Hashable {
     public var name: String
     public var base: RGB
     public var blobs: [Blob]
+    /// Strength of a fine single-pixel grain over the wash: its peak-to-peak swing in display values. 0 = none;
+    /// around 0.035 reads as a soft pastel card, 0.055 as the grain on a dark poster. It survives H.264 at the
+    /// video's bitrate at roughly 80% strength.
+    public var grain: Double = 0
 
     /// The colours, base first, for drawing a swatch.
     public var colors: [RGB] { [base] + blobs.map(\.color) }
@@ -121,6 +125,32 @@ public struct BackgroundPreset: Sendable, Equatable, Hashable {
     }
 
     public static let all: [BackgroundPreset] = [
+        // Soft pastel cards with a fine grain.
+        BackgroundPreset(name: "Mist", base: RGB(0.85, 0.85, 0.87), blobs: [
+            Blob(RGB(0.95, 0.95, 0.96), x: 0.2, y: 0.85, radius: 0.5),
+            Blob(RGB(0.72, 0.72, 0.76), x: 0.85, y: 0.15, radius: 0.55),
+        ], grain: 0.03),
+        BackgroundPreset(name: "Sage", base: RGB(0.71, 0.79, 0.69), blobs: [
+            Blob(RGB(0.84, 0.89, 0.80), x: 0.2, y: 0.85, radius: 0.5),
+            Blob(RGB(0.56, 0.66, 0.54), x: 0.85, y: 0.15, radius: 0.55),
+        ], grain: 0.035),
+        BackgroundPreset(name: "Blush", base: RGB(0.93, 0.78, 0.78), blobs: [
+            Blob(RGB(0.98, 0.89, 0.85), x: 0.2, y: 0.85, radius: 0.5),
+            Blob(RGB(0.85, 0.62, 0.67), x: 0.85, y: 0.15, radius: 0.55),
+        ], grain: 0.035),
+        BackgroundPreset(name: "Lavender", base: RGB(0.78, 0.75, 0.90), blobs: [
+            Blob(RGB(0.89, 0.87, 0.96), x: 0.2, y: 0.85, radius: 0.5),
+            Blob(RGB(0.62, 0.58, 0.82), x: 0.85, y: 0.15, radius: 0.55),
+        ], grain: 0.035),
+        BackgroundPreset(name: "Sand", base: RGB(0.87, 0.80, 0.68), blobs: [
+            Blob(RGB(0.95, 0.91, 0.81), x: 0.2, y: 0.85, radius: 0.5),
+            Blob(RGB(0.74, 0.65, 0.52), x: 0.85, y: 0.15, radius: 0.55),
+        ], grain: 0.035),
+        BackgroundPreset(name: "Sky", base: RGB(0.72, 0.83, 0.93), blobs: [
+            Blob(RGB(0.87, 0.93, 0.98), x: 0.2, y: 0.85, radius: 0.5),
+            Blob(RGB(0.54, 0.70, 0.86), x: 0.85, y: 0.15, radius: 0.55),
+        ], grain: 0.03),
+        // Richer washes, like a blurred photo.
         BackgroundPreset(name: "Meadow", base: RGB(0.44, 0.52, 0.30), blobs: [
             Blob(RGB(0.70, 0.76, 0.46), x: 0.15, y: 0.85, radius: 0.45),
             Blob(RGB(0.30, 0.38, 0.18), x: 0.85, y: 0.15, radius: 0.6),
@@ -146,10 +176,19 @@ public struct BackgroundPreset: Sendable, Equatable, Hashable {
             Blob(RGB(0.08, 0.06, 0.18), x: 0.9, y: 0.1, radius: 0.6),
             Blob(RGB(0.35, 0.30, 0.70), x: 0.6, y: 0.5, radius: 0.4),
         ]),
+        // Neutrals.
+        BackgroundPreset(name: "Cocoa", base: RGB(0.16, 0.115, 0.11), blobs: [
+            Blob(RGB(0.075, 0.06, 0.06), x: 0.0, y: 0.4, radius: 0.7),
+            Blob(RGB(0.26, 0.18, 0.165), x: 1.0, y: 0.75, radius: 0.65),
+        ], grain: 0.055),
+        BackgroundPreset(name: "Grey", base: RGB(0.50, 0.50, 0.52), blobs: [
+            Blob(RGB(0.60, 0.60, 0.62), x: 0.2, y: 0.85, radius: 0.5),
+            Blob(RGB(0.40, 0.40, 0.42), x: 0.85, y: 0.15, radius: 0.55),
+        ], grain: 0.045),
         BackgroundPreset(name: "Graphite", base: RGB(0.14, 0.14, 0.15), blobs: [
             Blob(RGB(0.26, 0.26, 0.28), x: 0.2, y: 0.85, radius: 0.5),
             Blob(RGB(0.06, 0.06, 0.07), x: 0.9, y: 0.1, radius: 0.6),
-        ]),
+        ], grain: 0.05),
     ]
 }
 
@@ -196,9 +235,9 @@ public struct Presenter: Sendable, Codable, Equatable, Hashable {
     /// Corner radius.
     public static let cornerRadius: CGFloat = 0.065
     /// Width of the light along the edge.
-    public static let edgeWidth: CGFloat = 0.004
-    public static let edgeOpacityTop: CGFloat = 0.55
-    public static let edgeOpacityBottom: CGFloat = 0.18
+    public static let edgeWidth: CGFloat = 0.005
+    public static let edgeOpacityTop: CGFloat = 0.22
+    public static let edgeOpacityBottom: CGFloat = 0.06
     /// Shadow blur sigma, offset downwards and opacity; blur and offset are fractions of the frame height.
     public static let shadowBlur: CGFloat = 0.035
     public static let shadowOffset: CGFloat = 0.018

@@ -33,7 +33,8 @@ struct PresenterTile: View {
                 .overlay(shape.strokeBorder(
                     LinearGradient(colors: [.white.opacity(Presenter.edgeOpacityTop), .white.opacity(Presenter.edgeOpacityBottom)],
                                    startPoint: .top, endPoint: .bottom),
-                    lineWidth: max(1, Presenter.edgeWidth * height)))
+                    lineWidth: max(1, Presenter.edgeWidth * height))
+                    .blur(radius: max(0.5, Presenter.edgeWidth * height * 0.8)))
                 // The shadow is a fraction of the frame; the preview's frame is about height / size tall.
                 .shadow(color: .black.opacity(Presenter.shadowOpacity),
                         radius: Presenter.shadowBlur * height / presenterScale, y: Presenter.shadowOffset * height / presenterScale)
