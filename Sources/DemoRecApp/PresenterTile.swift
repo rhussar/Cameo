@@ -2,12 +2,14 @@ import DemoRecKit
 import SwiftUI
 
 /// You in the previews, drawn the way the video will show you: the cutout as is, or the camera picture in a
-/// rounded glass tile over whatever is behind it. The system material stands in for the compositor's frosted rim.
+/// floating pane with soft corners, a hairline of light and a wide shadow, drawn with the same numbers as the video.
 struct PresenterTile: View {
     let image: CGImage
     let presenter: Presenter
     let width: CGFloat
     let height: CGFloat
+    /// Tile height as a fraction of the frame height (Layout.scale), so the shadow scales with the frame as in the video.
+    var presenterScale: CGFloat = 0.35
 
     /// The tile's width for its height: the picture's own shape for a cutout, the tile shape for glass.
     static func width(for height: CGFloat, image: CGImage, presenter: Presenter) -> CGFloat {
@@ -23,20 +25,18 @@ struct PresenterTile: View {
             Image(decorative: image, scale: 1).resizable()
                 .frame(width: width, height: height)
         case .glass:
-            let rim = max(2, (0.018 * height).rounded())
-            let radius = 0.075 * height
+            let radius = Presenter.cornerRadius * height
             let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-            ZStack {
-                shape.fill(.ultraThinMaterial)
-                Image(decorative: image, scale: 1).resizable().scaledToFill()
-                    .frame(width: width - 2 * rim, height: height - 2 * rim)
-                    .clipShape(RoundedRectangle(cornerRadius: max(radius - rim, 1), style: .continuous))
-                shape.strokeBorder(
-                    LinearGradient(colors: [.white.opacity(0.85), .white.opacity(0.35)], startPoint: .top, endPoint: .bottom),
-                    lineWidth: max(1, 0.004 * height))
-            }
-            .frame(width: width, height: height)
-            .shadow(color: .black.opacity(0.35), radius: 0.025 * height, y: 0.012 * height)
+            Image(decorative: image, scale: 1).resizable().scaledToFill()
+                .frame(width: width, height: height)
+                .clipShape(shape)
+                .overlay(shape.strokeBorder(
+                    LinearGradient(colors: [.white.opacity(Presenter.edgeOpacityTop), .white.opacity(Presenter.edgeOpacityBottom)],
+                                   startPoint: .top, endPoint: .bottom),
+                    lineWidth: max(1, Presenter.edgeWidth * height)))
+                // The shadow is a fraction of the frame; the preview's frame is about height / size tall.
+                .shadow(color: .black.opacity(Presenter.shadowOpacity),
+                        radius: Presenter.shadowBlur * height / presenterScale, y: Presenter.shadowOffset * height / presenterScale)
         }
     }
 }

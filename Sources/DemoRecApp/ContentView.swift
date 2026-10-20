@@ -711,7 +711,7 @@ private struct Preview: View {
         } else if let img = model.previewImage {
             let w = PresenterTile.width(for: h, image: img, presenter: model.presenter)
             let center = presenterCenter(w: w, h: h, margin: margin, in: size)
-            PresenterTile(image: img, presenter: model.presenter, width: w, height: h)
+            PresenterTile(image: img, presenter: model.presenter, width: w, height: h, presenterScale: model.size)
                 .contentShape(Rectangle())
                 .pointerStyle(model.isSetup ? .grabIdle : .default)
                 .onTapGesture {} // a click on you isn't a corner pick

@@ -328,8 +328,8 @@ public final class Compositor {
         return person.composited(over: screen).cropped(to: screen.extent)
     }
 
-    /// The camera picture in a rounded glass tile: the backdrop shows through a frosted rim around the picture,
-    /// with a thin bright edge and a soft shadow, like a floating pane. Sized and positioned like the cutout.
+    /// The camera picture as a floating pane: soft rounded corners, a faint hairline of light along the edge,
+    /// and a wide, diffuse shadow, like a photo on an iPhone lock screen. Sized and positioned like the cutout.
     private func placeGlass(camera: CIImage, over base: CIImage) -> CIImage {
         let W = base.extent.width
         let H = base.extent.height
@@ -348,15 +348,12 @@ public final class Compositor {
         case .topLeft: x = margin; y = H - tileH - margin
         } }
         let tile = CGRect(x: x.rounded(), y: y.rounded(), width: tileW, height: tileH)
-        let rim = max(2, (0.018 * tileH).rounded())
-        let outerRadius = 0.075 * tileH
-        let inner = tile.insetBy(dx: rim, dy: rim)
-        let innerRadius = max(outerRadius - rim, 1)
+        let radius = Presenter.cornerRadius * tileH
 
         func rounded(_ rect: CGRect, _ radius: CGFloat) -> CIImage {
             let rr = CIFilter.roundedRectangleGenerator()
             rr.extent = rect
-            rr.radius = Float(radius)
+            rr.radius = Float(max(radius, 0.5))
             rr.color = .white
             return (rr.outputImage ?? CIImage(color: .white)).cropped(to: rect)
         }
@@ -367,54 +364,41 @@ public final class Compositor {
             blend.maskImage = mask
             return (blend.outputImage ?? image).cropped(to: rect)
         }
-        let outerMask = rounded(tile, outerRadius)
-        let innerMask = rounded(inner, innerRadius)
-
+        let mask = rounded(tile, radius)
         var result = base
 
-        // Shadow under the pane.
-        let shadowSigma = 0.025 * H
-        let ink = clipped(CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.45)), to: outerMask, in: tile)
+        // A wide, soft shadow, offset a little downwards.
+        let shadowSigma = Presenter.shadowBlur * H
+        let ink = clipped(CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: Presenter.shadowOpacity)), to: mask, in: tile)
         let shadow = ink.clampedToExtent().applyingGaussianBlur(sigma: shadowSigma)
-            .transformed(by: CGAffineTransform(translationX: 0, y: -0.012 * H))
+            .transformed(by: CGAffineTransform(translationX: 0, y: -Presenter.shadowOffset * H))
             .cropped(to: base.extent)
         result = shadow.composited(over: result)
 
-        // Frosted glass: the backdrop under the tile, blurred and lightened, clipped to the pane.
-        let reach = shadowSigma * 3
-        let sample = base.cropped(to: tile.insetBy(dx: -reach, dy: -reach).intersection(base.extent)).clampedToExtent()
-        let down: CGFloat = 4
-        var frost = sample
-            .transformed(by: CGAffineTransform(scaleX: 1 / down, y: 1 / down))
-            .applyingGaussianBlur(sigma: 0.02 * H / down)
-            .transformed(by: CGAffineTransform(scaleX: down, y: down))
-            .cropped(to: tile)
-        frost = CIImage(color: CIColor(red: 1, green: 1, blue: 1, alpha: 0.28)).cropped(to: tile).composited(over: frost)
-        result = clipped(frost, to: outerMask, in: tile).composited(over: result)
-
-        // The camera picture, centre-cropped to the pane's shape.
+        // The picture, centre-cropped to the pane and clipped to its corners.
         let cam = camera.transformed(by: CGAffineTransform(translationX: -camera.extent.minX, y: -camera.extent.minY))
-        let cover = max(inner.width / cam.extent.width, inner.height / cam.extent.height)
+        let cover = max(tile.width / cam.extent.width, tile.height / cam.extent.height)
         var picture = cam.transformed(by: CGAffineTransform(scaleX: cover, y: cover))
-        picture = picture.transformed(by: CGAffineTransform(translationX: inner.midX - picture.extent.width / 2,
-                                                            y: inner.midY - picture.extent.height / 2))
-        result = clipped(picture, to: innerMask, in: inner).composited(over: result)
+        picture = picture.transformed(by: CGAffineTransform(translationX: tile.midX - picture.extent.width / 2,
+                                                            y: tile.midY - picture.extent.height / 2))
+        result = clipped(picture, to: mask, in: tile).composited(over: result)
 
-        // Bright edge: a hairline of white along the outside, brighter towards the top.
-        let hair = max(1, (0.004 * tileH).rounded())
-        let edgeMask = rounded(tile.insetBy(dx: hair, dy: hair), max(outerRadius - hair, 1))
+        // A hairline of light along the edge, brighter at the top, softened so it reads as a highlight, not a border.
+        let hair = max(1, (Presenter.edgeWidth * tileH).rounded())
+        let insetMask = rounded(tile.insetBy(dx: hair, dy: hair), max(radius - hair, 0.5))
         let shine = CIFilter.linearGradient()
         shine.point0 = CGPoint(x: tile.midX, y: tile.maxY)
         shine.point1 = CGPoint(x: tile.midX, y: tile.minY)
-        shine.color0 = CIColor(red: 1, green: 1, blue: 1, alpha: 0.85)
-        shine.color1 = CIColor(red: 1, green: 1, blue: 1, alpha: 0.35)
-        let ring = clipped(shine.outputImage ?? CIImage(color: .white), to: outerMask, in: tile)
-        // Cut the inside out: keep the ring only where the inset mask is dark.
+        shine.color0 = CIColor(red: 1, green: 1, blue: 1, alpha: Presenter.edgeOpacityTop)
+        shine.color1 = CIColor(red: 1, green: 1, blue: 1, alpha: Presenter.edgeOpacityBottom)
+        let ring = clipped(shine.outputImage ?? CIImage(color: .white), to: mask, in: tile)
         let cut = CIFilter.blendWithMask()
         cut.inputImage = CIImage(color: .clear).cropped(to: tile)
         cut.backgroundImage = ring
-        cut.maskImage = edgeMask
-        result = (cut.outputImage ?? ring).cropped(to: tile).composited(over: result)
+        cut.maskImage = insetMask
+        let edge = (cut.outputImage ?? ring).cropped(to: tile)
+            .clampedToExtent().applyingGaussianBlur(sigma: hair * 0.6).cropped(to: tile)
+        result = edge.composited(over: result)
 
         return result.cropped(to: base.extent)
     }

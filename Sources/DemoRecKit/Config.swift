@@ -191,6 +191,18 @@ public struct Presenter: Sendable, Codable, Equatable, Hashable {
 
     /// Whether person segmentation is needed at all.
     public var needsMask: Bool { style == .cutout }
+
+    // The glass tile's look, shared by the video and the previews. Fractions of the tile height unless noted.
+    /// Corner radius.
+    public static let cornerRadius: CGFloat = 0.065
+    /// Width of the light along the edge.
+    public static let edgeWidth: CGFloat = 0.004
+    public static let edgeOpacityTop: CGFloat = 0.55
+    public static let edgeOpacityBottom: CGFloat = 0.18
+    /// Shadow blur sigma, offset downwards and opacity; blur and offset are fractions of the frame height.
+    public static let shadowBlur: CGFloat = 0.035
+    public static let shadowOffset: CGFloat = 0.018
+    public static let shadowOpacity: CGFloat = 0.5
 }
 
 extension Layout {

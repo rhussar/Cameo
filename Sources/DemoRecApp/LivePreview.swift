@@ -190,7 +190,7 @@ private struct LivePreviewView: View {
                 if let person = preview.personImage {
                     let h = geo.size.height * model.size
                     let w = PresenterTile.width(for: h, image: person, presenter: model.presenter)
-                    PresenterTile(image: person, presenter: model.presenter, width: w, height: h)
+                    PresenterTile(image: person, presenter: model.presenter, width: w, height: h, presenterScale: model.size)
                         .position(center(w: w, h: h, in: geo.size))
                 }
             }
