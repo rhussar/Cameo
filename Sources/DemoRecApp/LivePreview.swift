@@ -13,8 +13,8 @@ final class LivePreview {
 
     /// Show the preview while recording.
     private(set) var enabled = UserDefaults.standard.bool(forKey: "previewWhileRecording")
-    var screenImage: CGImage?
-    var personImage: CGImage?
+    var screenImage: PreviewFrame?
+    var personImage: PreviewFrame?
 
     @ObservationIgnored private weak var model: RecorderModel?
     @ObservationIgnored private weak var camera: CameraRecorder?
@@ -182,7 +182,7 @@ private struct LivePreviewView: View {
             ZStack {
                 Color.black
                 if let screen = preview.screenImage {
-                    Image(decorative: screen, scale: 1).resizable().interpolation(.high)
+                    SurfaceView(frame: screen)
                         .frame(width: geo.size.width, height: geo.size.height)
                 } else {
                     ProgressView().controlSize(.small)

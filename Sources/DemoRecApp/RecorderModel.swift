@@ -18,7 +18,7 @@ final class RecorderModel {
     var phase: Phase = .idle
     var cameras: [AVCaptureDevice] = []
     var microphones: [AVCaptureDevice] = []
-    var previewImage: CGImage?
+    var previewImage: PreviewFrame?
     var cameraDenied = false
     var thumbnail: CGImage?
     /// Past recordings, newest first.
@@ -73,7 +73,7 @@ final class RecorderModel {
     }
     var displaySources: [Source] = []
     var windowSources: [Source] = []
-    var screenImage: CGImage?
+    var screenImage: PreviewFrame?
     var screenAccess = CGPreflightScreenCaptureAccess()
     var selectedSource: Source? { (displaySources + windowSources).first { $0.target == target } }
 

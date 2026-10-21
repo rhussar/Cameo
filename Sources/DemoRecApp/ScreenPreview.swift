@@ -1,4 +1,5 @@
 import CoreImage
+import CoreVideo
 import DemoRecKit
 import Metal
 import ScreenCaptureKit
@@ -8,10 +9,13 @@ import ScreenCaptureKit
 /// Zooms live like the video will: feed `liveZoom` the pointer and it redraws smoothly while zoomed.
 final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     /// Delivered on the main queue.
-    var onImage: ((CGImage) -> Void)?
+    var onImage: ((PreviewFrame) -> Void)?
 
     private let queue = DispatchQueue(label: "demorec.screenpreview")
-    private let ciContext: CIContext = MTLCreateSystemDefaultDevice().map { CIContext(mtlDevice: $0) } ?? CIContext()
+    private let renderer = FrameRenderer()
+    private lazy var textureCache = renderer.makeTextureCache()
+    private var lastTexture: CVMetalTexture? // queue only; keeps lastFrame's buffer alive
+    private let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
     private var stream: SCStream?
     private var generation = 0
     private var stage: Stage? // queue only
@@ -61,8 +65,9 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         cfg.height = max(2, Int(rect.height * s) & ~1)
         cfg.minimumFrameInterval = CMTime(value: 1, timescale: 10)
         cfg.pixelFormat = kCVPixelFormatType_32BGRA
+        cfg.colorSpaceName = CGColorSpace.sRGB
         cfg.showsCursor = true
-        cfg.queueDepth = 3
+        cfg.queueDepth = 5 // one is held as lastFrame; the rest keep the stream flowing
 
         let stream = SCStream(filter: filter, configuration: cfg, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
@@ -92,10 +97,20 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
               let statusRaw = attachments.first?[.status] as? Int,
               SCFrameStatus(rawValue: statusRaw) == .complete,
               let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        // Copy out of the pixel buffer so holding the last frame doesn't starve the stream's buffer pool.
-        let buffer = CIImage(cvPixelBuffer: pb)
-        guard let raw = ciContext.createCGImage(buffer, from: buffer.extent) else { return }
-        let frame = CIImage(cgImage: raw)
+        // Read in place as a Metal texture: the frame stays on the GPU instead of being converted on the CPU first.
+        // Holding this one buffer as the last frame is fine; queueDepth leaves the stream spares (see start).
+        let frame: CIImage
+        var cvTexture: CVMetalTexture?
+        if let cache = textureCache,
+           CVMetalTextureCacheCreateTextureFromImage(nil, cache, pb, nil, .bgra8Unorm,
+                                                     CVPixelBufferGetWidth(pb), CVPixelBufferGetHeight(pb), 0, &cvTexture) == kCVReturnSuccess,
+           let cvTexture, let texture = CVMetalTextureGetTexture(cvTexture),
+           let image = CIImage(mtlTexture: texture, options: [.colorSpace: srgb]) {
+            frame = image.oriented(.downMirrored) // Metal's rows run top-down, CoreImage's bottom-up
+        } else {
+            frame = CIImage(cvPixelBuffer: pb)
+        }
+        lastTexture = cvTexture
         lastFrame = frame
         if zoom == .none { render(frame) } // while zoomed, the zoom timer redraws anyway
     }
@@ -122,7 +137,7 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     }
 
     private func render(_ frame: CIImage) {
-        var cg = frame.cgImage
+        var out = frame
         if stage != nil || canvas != nil || crop != nil || zoom != .none {
             var layout = Layout()
             layout.stage = stage
@@ -138,11 +153,10 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
                 compositor = Compositor(layout: layout)
                 compositorLayout = layout
             }
-            let styled = compositor!.compose(screen: frame, cutout: nil, zoom: zoom)
-            cg = ciContext.createCGImage(styled, from: styled.extent)
+            out = compositor!.compose(screen: frame, cutout: nil, zoom: zoom)
         }
-        guard let cg else { return }
-        DispatchQueue.main.async { self.onImage?(cg) }
+        guard let rendered = renderer.render(out) else { return }
+        DispatchQueue.main.async { self.onImage?(rendered) }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {

@@ -7,14 +7,14 @@ import Metal
 /// Runs its own capture session; stop it before recording so the recorder gets the camera.
 final class CameraPreview: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
     /// Delivered on the main queue.
-    var onImage: ((CGImage) -> Void)?
+    var onImage: ((PreviewFrame) -> Void)?
 
     private let session = AVCaptureSession()
     private let output = AVCaptureVideoDataOutput()
     private let sessionQueue = DispatchQueue(label: "demorec.preview.session")
     private let frameQueue = DispatchQueue(label: "demorec.preview.frames")
     private let masker = PersonMasker(quality: .balanced)
-    private let ciContext: CIContext = MTLCreateSystemDefaultDevice().map { CIContext(mtlDevice: $0) } ?? CIContext()
+    private let renderer = FrameRenderer() // frameQueue only
     private var mirror = false // frameQueue only
     private var look = Look() // frameQueue only
     private var masking = true // frameQueue only
@@ -96,7 +96,7 @@ final class CameraPreview: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
         var layout = Layout(feather: 1.5, mirror: mirror)
         layout.look = look
         let cutout = Compositor(layout: layout).cutout(camera: CIImage(cvPixelBuffer: pb), mask: mask)
-        guard let cg = ciContext.createCGImage(cutout, from: cutout.extent) else { return }
-        DispatchQueue.main.async { self.onImage?(cg) }
+        guard let frame = renderer.render(cutout) else { return }
+        DispatchQueue.main.async { self.onImage?(frame) }
     }
 }

@@ -4,7 +4,7 @@ import SwiftUI
 /// You in the previews, drawn the way the video will show you: the cutout as is, or the camera picture in a
 /// floating pane with soft corners, a hairline of light and a wide shadow, drawn with the same numbers as the video.
 struct PresenterTile: View {
-    let image: CGImage
+    let image: PreviewFrame
     let presenter: Presenter
     let width: CGFloat
     let height: CGFloat
@@ -12,7 +12,7 @@ struct PresenterTile: View {
     var presenterScale: CGFloat = 0.35
 
     /// The tile's width for its height: the picture's own shape for a cutout, the tile shape for glass.
-    static func width(for height: CGFloat, image: CGImage, presenter: Presenter) -> CGFloat {
+    static func width(for height: CGFloat, image: PreviewFrame, presenter: Presenter) -> CGFloat {
         switch presenter.style {
         case .cutout: height * CGFloat(image.width) / CGFloat(max(image.height, 1))
         case .glass: (height * CGFloat(presenter.tile.aspect)).rounded()
@@ -22,12 +22,12 @@ struct PresenterTile: View {
     var body: some View {
         switch presenter.style {
         case .cutout:
-            Image(decorative: image, scale: 1).resizable()
+            SurfaceView(frame: image)
                 .frame(width: width, height: height)
         case .glass:
             let radius = Presenter.cornerRadius * height
             let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-            Image(decorative: image, scale: 1).resizable().scaledToFill()
+            SurfaceView(frame: image, fill: true)
                 .frame(width: width, height: height)
                 .clipShape(shape)
                 .overlay(shape.strokeBorder(

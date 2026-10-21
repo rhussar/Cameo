@@ -735,7 +735,7 @@ private struct Preview: View {
 
     @ViewBuilder private func background(in size: CGSize) -> some View {
         if let screen = model.screenImage {
-            Image(decorative: screen, scale: 1).resizable().interpolation(.high)
+            SurfaceView(frame: screen)
                 .frame(width: size.width, height: size.height)
         } else {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
