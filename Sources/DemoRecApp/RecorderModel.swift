@@ -26,6 +26,16 @@ final class RecorderModel {
     /// Recordings whose video was never made (Cameo or the Mac stopped while making it), newest first.
     /// Their screen, camera and pointer files are still in Session.workBase.
     var unfinished: [URL] = []
+    /// Unfinished recordings whose notice you hid, by folder name. Their files stay where they are.
+    private var hiddenUnfinished: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "hiddenUnfinished") ?? []) {
+        didSet { UserDefaults.standard.set(Array(hiddenUnfinished), forKey: "hiddenUnfinished") }
+    }
+    /// The unfinished recordings whose notice still shows, newest first.
+    var visibleUnfinished: [URL] { unfinished.filter { !hiddenUnfinished.contains($0.lastPathComponent) } }
+    /// Stops showing the notice for this recording. Its files aren't touched; Show Files still finds them.
+    func hideUnfinished(_ dir: URL) {
+        hiddenUnfinished.insert(dir.lastPathComponent)
+    }
     var previewHovering = false
     var lookOpen = false
     var sceneOpen = false

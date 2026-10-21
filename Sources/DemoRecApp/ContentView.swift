@@ -35,7 +35,7 @@ private struct BottomBar: View {
                 if case .failed(let msg, let needsSettings) = model.phase {
                     Notice(text: msg, action: needsSettings ? ("Open Settings", { model.openPrivacySettings() }) : nil)
                 }
-                if let dir = model.unfinished.first, model.phase == .idle || isFailed {
+                if let dir = model.visibleUnfinished.first, model.phase == .idle || isFailed {
                     UnfinishedNotice(model: model, dir: dir)
                 }
                 // One row when it fits; otherwise what you record on top, how it looks + Record below.
@@ -1028,13 +1028,23 @@ private struct UnfinishedNotice: View {
             Button("Make the Video") { model.finish(dir) }
                 .controlSize(.small)
                 .buttonStyle(.borderedProminent)
+            Button {
+                withAnimation(.easeOut(duration: 0.2)) { model.hideUnfinished(dir) }
+            } label: {
+                Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .padding(.leading, 2)
+            .help("Hide this notice. The recording's files stay where they are.")
+            .accessibilityLabel("Hide")
         }
         .padding(10)
         .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var text: String {
-        let more = model.unfinished.count - 1
+        let more = model.visibleUnfinished.count - 1
         let when = Session.startedAt(folder: dir).map { "from \($0.formatted(date: .abbreviated, time: .shortened)) " } ?? ""
         return "Your recording \(when)wasn't made into a video yet. It's safe."
             + (more > 0 ? " (\(more) more after this one.)" : "")
