@@ -96,8 +96,9 @@ struct Composite: AsyncParsableCommand {
     @Option(help: "Look preset for you: \(Look.presets.map { $0.name.lowercased() }.joined(separator: ", ")).") var look: String = "natural"
 
     @Option(help: "Whole scene at once: \(Scene.presets.map { $0.name.lowercased() }.joined(separator: ", ")). The options below override its parts.") var scene: String?
-    @Option(help: "Behind the screen card: screen (a blurred copy of it), a preset (\(BackgroundPreset.all.map { $0.name.lowercased() }.joined(separator: ", "))), or the path of a picture.") var background: String?
+    @Option(help: "Behind the screen card: screen (a blurred copy of it), a wallpaper (\(Wallpaper.all.map { $0.name.lowercased().replacingOccurrences(of: " ", with: "-") }.joined(separator: ", "))), a colour like \"#5a6a80\", or the path of a picture.") var background: String?
     @Option(name: .customLong("background-blur"), help: "Blur for a background picture, as a fraction of the frame height. 0 = sharp.") var backgroundBlur: Double = 0.012
+    @Option(help: "Grain on a colour background, 0 (smooth) to 0.12 (grainy).") var texture: Double = 0.03
     @Option(help: "How you appear: cutout, glass.") var presenter: Presenter.Style?
     @Option(help: "Glass tile shape: portrait, square, landscape.") var tile: Presenter.Tile?
     @Flag(help: "Straight padded card (no tilt) over the background.") var card = false
@@ -110,6 +111,13 @@ struct Composite: AsyncParsableCommand {
     @Option(name: .customLong("bg-zoom"), help: "Backdrop zoom factor.") var bgZoom: Double = 1.2
     @Option(name: .customLong("bg-dim"), help: "Backdrop darkening, 0-1.") var bgDim: Double = 0.35
     @Option(help: "Drop shadow opacity, 0-1.") var shadow: Double = 0.6
+
+    /// "#5a6a80" or "5a6a80" as sRGB 0...1.
+    static func hexColor(_ s: String) -> (Double, Double, Double)? {
+        let hex = s.hasPrefix("#") ? String(s.dropFirst()) : s
+        guard hex.count == 6, let v = UInt32(hex, radix: 16) else { return nil }
+        return (Double(v >> 16 & 0xff) / 255, Double(v >> 8 & 0xff) / 255, Double(v & 0xff) / 255)
+    }
 
     func run() async throws {
         let dir = URL(fileURLWithPath: NSString(string: session).expandingTildeInPath)
@@ -142,11 +150,13 @@ struct Composite: AsyncParsableCommand {
         if let background {
             if background.lowercased() == "screen" {
                 layout.background = .screen
-            } else if let p = BackgroundPreset.named(background) {
-                layout.background = .preset(p.name)
+            } else if let w = Wallpaper.named(background) {
+                layout.background = .preset(w.name)
+            } else if let rgb = Self.hexColor(background) {
+                layout.background = .color(r: rgb.0, g: rgb.1, b: rgb.2, texture: min(max(texture, 0), 0.12))
             } else {
                 let path = NSString(string: background).expandingTildeInPath
-                guard FileManager.default.fileExists(atPath: path) else { throw DemoRecError("no such background preset or picture: \(background)") }
+                guard FileManager.default.fileExists(atPath: path) else { throw DemoRecError("no such background wallpaper, colour or picture: \(background)") }
                 layout.background = .image(path: path, blur: backgroundBlur)
             }
         }

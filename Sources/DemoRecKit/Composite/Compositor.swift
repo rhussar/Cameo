@@ -127,7 +127,7 @@ public final class Compositor {
     private func backdrop(screen: CIImage, frame: CGRect, zoom: CGFloat, blur: CGFloat, dim: CGFloat) -> CIImage {
         switch layout.background {
         case .screen: return blurredScreen(screen: screen, frame: frame, zoom: zoom, blur: blur, dim: dim)
-        case .preset, .image: return staticBackground(frame: frame)
+        case .preset, .color, .image: return staticBackground(frame: frame)
         }
     }
 
@@ -147,8 +147,8 @@ public final class Compositor {
         return image
     }
 
-    /// Draws a background to fill `frame`: a preset's colour blobs over its base, or a picture scaled to cover.
-    /// Unknown presets and unreadable pictures fall back to graphite so the video still renders.
+    /// Draws a background to fill `frame`: a wallpaper, a shaded colour, or a picture scaled to cover.
+    /// Unknown wallpapers fall back to the first one, unreadable pictures to the default colour, so the video still renders.
     static func drawBackground(_ background: Background, frame: CGRect) -> CIImage {
         let W = frame.width, H = frame.height
         switch background {
@@ -157,7 +157,7 @@ public final class Compositor {
         case .image(let path, let blur):
             guard let picture = CIImage(contentsOf: URL(fileURLWithPath: path), options: [.applyOrientationProperty: true]),
                   picture.extent.width > 0, picture.extent.height > 0 else {
-                return drawBackground(.preset("Graphite"), frame: frame)
+                return drawBackground(Background.defaultColor, frame: frame)
             }
             let p = picture.transformed(by: CGAffineTransform(translationX: -picture.extent.minX, y: -picture.extent.minY))
             let cover = max(W / p.extent.width, H / p.extent.height)
@@ -168,48 +168,43 @@ public final class Compositor {
             }
             return out.cropped(to: frame)
         case .preset(let name):
-            let preset = BackgroundPreset.named(name) ?? BackgroundPreset.all.last!
-            func color(_ c: BackgroundPreset.RGB, alpha: CGFloat = 1) -> CIColor {
-                CIColor(red: CGFloat(c.r), green: CGFloat(c.g), blue: CGFloat(c.b), alpha: alpha)
-            }
-            var out = CIImage(color: color(preset.base)).cropped(to: frame)
-            let long = max(W, H)
-            for blob in preset.blobs {
-                let g = CIFilter.radialGradient()
-                g.center = CGPoint(x: CGFloat(blob.x) * W, y: CGFloat(blob.y) * H)
-                g.radius0 = 0
-                g.radius1 = Float(CGFloat(blob.radius) * long)
-                g.color0 = color(blob.color, alpha: 0.8)
-                g.color1 = color(blob.color, alpha: 0)
-                if let image = g.outputImage {
-                    out = image.cropped(to: frame).composited(over: out)
-                }
-            }
-            if preset.grain > 0 {
-                // Fine single-pixel monochrome grain, added in display (sRGB) values so a strength means the same on a
-                // dark wash as a light one: `grain` is the peak-to-peak swing, so 0.055 spreads about ±4 code values.
-                // The generator's alpha is random too; settingAlphaOne makes it opaque without dividing by that alpha,
-                // which would blow near-transparent pixels up into bright specks.
-                let a = CGFloat(preset.grain)
-                let noise = CIFilter.randomGenerator().outputImage?
-                    .cropped(to: frame).settingAlphaOne(in: frame)
-                    .applyingFilter("CIColorMatrix", parameters: [
-                        "inputRVector": CIVector(x: a, y: 0, z: 0, w: 0),
-                        "inputGVector": CIVector(x: a, y: 0, z: 0, w: 0),
-                        "inputBVector": CIVector(x: a, y: 0, z: 0, w: 0),
-                        "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
-                    ])
-                if let noise {
-                    // Lower the wash by half the swing, then add the noise back: the average colour is unchanged.
-                    let display = out.applyingFilter("CILinearToSRGBToneCurve")
-                        .applyingFilter("CIColorMatrix", parameters: ["inputBiasVector": CIVector(x: -a / 2, y: -a / 2, z: -a / 2, w: 0)])
-                    out = noise.applyingFilter("CILinearDodgeBlendMode", parameters: [kCIInputBackgroundImageKey: display])
-                        .applyingFilter("CISRGBToneCurveToLinear")
-                        .cropped(to: frame)
-                }
-            }
-            return out
+            let wallpaper = Wallpaper.named(name) ?? Wallpaper.all[0]
+            guard let cg = wallpaper.render(width: Int(W), height: Int(H)) else { return CIImage(color: .black).cropped(to: frame) }
+            return grained(CIImage(cgImage: cg).cropped(to: frame), amount: wallpaper.grain, frame: frame)
+        case .color(let r, let g, let b, let texture):
+            // A flat colour looks cheap on video; a gentle light from the top left gives it depth.
+            var out = CIImage(color: CIColor(red: CGFloat(r), green: CGFloat(g), blue: CGFloat(b))).cropped(to: frame)
+            let shade = CIFilter.linearGradient()
+            shade.point0 = CGPoint(x: 0, y: H)
+            shade.point1 = CGPoint(x: W, y: 0)
+            shade.color0 = CIColor(red: 1, green: 1, blue: 1, alpha: 0.10)
+            shade.color1 = CIColor(red: 0, green: 0, blue: 0, alpha: 0.14)
+            if let s = shade.outputImage { out = s.cropped(to: frame).composited(over: out) }
+            return grained(out, amount: texture, frame: frame)
         }
+    }
+
+    /// Fine single-pixel monochrome grain, added in display (sRGB) values so an amount means the same on a dark
+    /// background as a light one: `amount` is the peak-to-peak swing, so 0.055 spreads about ±4 code values, and it
+    /// survives H.264 at the video's bitrate at roughly 80% strength. The generator's alpha is random too;
+    /// settingAlphaOne makes it opaque without dividing by that alpha, which would blow pixels up into bright specks.
+    static func grained(_ image: CIImage, amount: Double, frame: CGRect) -> CIImage {
+        guard amount > 0 else { return image }
+        let a = CGFloat(amount)
+        guard let noise = CIFilter.randomGenerator().outputImage?
+            .cropped(to: frame).settingAlphaOne(in: frame)
+            .applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: a, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: a, y: 0, z: 0, w: 0),
+                "inputBVector": CIVector(x: a, y: 0, z: 0, w: 0),
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+            ]) else { return image }
+        // Lower the picture by half the swing, then add the noise back: the average colour is unchanged.
+        let display = image.applyingFilter("CILinearToSRGBToneCurve")
+            .applyingFilter("CIColorMatrix", parameters: ["inputBiasVector": CIVector(x: -a / 2, y: -a / 2, z: -a / 2, w: 0)])
+        return noise.applyingFilter("CILinearDodgeBlendMode", parameters: [kCIInputBackgroundImageKey: display])
+            .applyingFilter("CISRGBToneCurveToLinear")
+            .cropped(to: frame)
     }
 
     /// The screen scaled to cover `frame`, zoomed, blurred and dimmed.

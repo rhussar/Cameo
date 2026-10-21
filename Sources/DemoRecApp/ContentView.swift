@@ -326,13 +326,29 @@ private struct ScenePanel: View {
                 Text("Background").font(.subheadline).foregroundStyle(.secondary)
                 LazyVGrid(columns: columns, spacing: 8) {
                     swatch(.screen, title: "Screen")
-                    ForEach(BackgroundPreset.all, id: \.name) { p in
-                        swatch(.preset(p.name), title: p.name)
+                    ForEach(Wallpaper.all, id: \.name) { w in
+                        swatch(.preset(w.name), title: w.name)
                     }
+                    colorSwatch
                     imageSwatch
                 }
                 if case .image = model.background {
                     Toggle("Soften the picture", isOn: $model.backgroundBlurred).font(.caption)
+                }
+                if case .color = model.background {
+                    HStack(spacing: 10) {
+                        ColorPicker("Colour", selection: Binding(get: { Color(nsColor: model.backgroundColor) },
+                                                                set: { model.backgroundColor = NSColor($0) }),
+                                    supportsOpacity: false)
+                            .fixedSize()
+                        Spacer(minLength: 6)
+                        Text("Smooth").font(.caption).foregroundStyle(.secondary)
+                        Slider(value: $model.backgroundTexture, in: Background.textureRange)
+                            .frame(width: 130)
+                            .help("Texture: how much fine grain the colour has")
+                        Text("Grainy").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 2)
                 }
                 if model.screenStyle == .flat, model.background != .screen {
                     Text("Shows around the screen when it doesn't fill the frame.").font(.caption).foregroundStyle(.secondary)
@@ -387,6 +403,29 @@ private struct ScenePanel: View {
         .help(title)
     }
 
+    /// Your own colour, with its texture.
+    private var colorSwatch: some View {
+        let selected: Bool = if case .color = model.background { true } else { false }
+        return Button {
+            withAnimation(.easeOut(duration: 0.15)) { model.background = model.colorBackground }
+        } label: {
+            VStack(spacing: 4) {
+                BackgroundSwatch(background: model.colorBackground)
+                    .overlay(alignment: .bottomTrailing) {
+                        Image(systemName: "eyedropper").font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.85)).padding(4)
+                    }
+                    .frame(height: 40)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(selected ? Color.accentColor : .white.opacity(0.12), lineWidth: selected ? 2 : 1))
+                Text("Colour").font(.caption2).lineLimit(1)
+            }
+        }
+        .buttonStyle(.plain)
+        .help("A colour of your own, with adjustable texture")
+    }
+
     /// Your own picture: the current one if there is one, else a prompt to pick.
     private var imageSwatch: some View {
         let current: Background? = if case .image = model.background { model.background } else { nil }
@@ -404,7 +443,7 @@ private struct ScenePanel: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .strokeBorder(selected ? Color.accentColor : .white.opacity(0.12), lineWidth: selected ? 2 : 1))
-                Text(selected ? "Picture…" : "Picture…").font(.caption2).lineLimit(1)
+                Text("Picture…").font(.caption2).lineLimit(1)
             }
         }
         .buttonStyle(.plain)

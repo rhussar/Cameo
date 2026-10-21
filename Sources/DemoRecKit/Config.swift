@@ -77,119 +77,32 @@ public struct Layout: Sendable, Codable {
 public enum Background: Sendable, Codable, Equatable, Hashable {
     /// A zoomed, blurred, dimmed copy of the screen itself (the classic look).
     case screen
-    /// One of `BackgroundPreset.all`, by name: soft colour washes like a blurred wallpaper.
+    /// One of `Wallpaper.all`, by name.
     case preset(String)
+    /// A solid colour of your choosing (sRGB, 0...1), softly shaded, with `texture` grain (see `Background.textureRange`).
+    case color(r: Double, g: Double, b: Double, texture: Double)
     /// A picture of your own, scaled to cover the frame. `blur` is a sigma as a fraction of the frame height; 0 = sharp.
     case image(path: String, blur: Double)
 
-    public var preset: BackgroundPreset? {
-        if case .preset(let name) = self { return BackgroundPreset.named(name) }
+    public var wallpaper: Wallpaper? {
+        if case .preset(let name) = self { return Wallpaper.named(name) }
         return nil
     }
 
-    /// A name for menus and the CLI: "screen", a preset name, or "image".
+    /// The colour background new users start from: a calm blue-grey with a little grain.
+    public static let defaultColor = Background.color(r: 0.40, g: 0.46, b: 0.56, texture: 0.03)
+    /// From smooth to grainy.
+    public static let textureRange: ClosedRange<Double> = 0...0.12
+
+    /// A name for menus and the CLI.
     public var label: String {
         switch self {
         case .screen: "Screen"
         case .preset(let name): name
+        case .color: "Colour"
         case .image: "Image"
         }
     }
-}
-
-/// A soft wash of a few colour blobs over a base colour, like a blurred wallpaper. Positions and radii are
-/// fractions of the frame (x left to right, y bottom to top, radius of the frame's long side).
-public struct BackgroundPreset: Sendable, Equatable, Hashable {
-    public struct RGB: Sendable, Equatable, Hashable {
-        public var r: Double, g: Double, b: Double
-        public init(_ r: Double, _ g: Double, _ b: Double) { self.r = r; self.g = g; self.b = b }
-    }
-    public struct Blob: Sendable, Equatable, Hashable {
-        public var color: RGB
-        public var x: Double, y: Double, radius: Double
-        public init(_ color: RGB, x: Double, y: Double, radius: Double) { self.color = color; self.x = x; self.y = y; self.radius = radius }
-    }
-    public var name: String
-    public var base: RGB
-    public var blobs: [Blob]
-    /// Strength of a fine single-pixel grain over the wash: its peak-to-peak swing in display values. 0 = none;
-    /// around 0.035 reads as a soft pastel card, 0.055 as the grain on a dark poster. It survives H.264 at the
-    /// video's bitrate at roughly 80% strength.
-    public var grain: Double = 0
-
-    /// The colours, base first, for drawing a swatch.
-    public var colors: [RGB] { [base] + blobs.map(\.color) }
-
-    public static func named(_ name: String) -> BackgroundPreset? {
-        all.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
-    }
-
-    public static let all: [BackgroundPreset] = [
-        // Soft pastel cards with a fine grain.
-        BackgroundPreset(name: "Mist", base: RGB(0.85, 0.85, 0.87), blobs: [
-            Blob(RGB(0.95, 0.95, 0.96), x: 0.2, y: 0.85, radius: 0.5),
-            Blob(RGB(0.72, 0.72, 0.76), x: 0.85, y: 0.15, radius: 0.55),
-        ], grain: 0.03),
-        BackgroundPreset(name: "Sage", base: RGB(0.71, 0.79, 0.69), blobs: [
-            Blob(RGB(0.84, 0.89, 0.80), x: 0.2, y: 0.85, radius: 0.5),
-            Blob(RGB(0.56, 0.66, 0.54), x: 0.85, y: 0.15, radius: 0.55),
-        ], grain: 0.035),
-        BackgroundPreset(name: "Blush", base: RGB(0.93, 0.78, 0.78), blobs: [
-            Blob(RGB(0.98, 0.89, 0.85), x: 0.2, y: 0.85, radius: 0.5),
-            Blob(RGB(0.85, 0.62, 0.67), x: 0.85, y: 0.15, radius: 0.55),
-        ], grain: 0.035),
-        BackgroundPreset(name: "Lavender", base: RGB(0.78, 0.75, 0.90), blobs: [
-            Blob(RGB(0.89, 0.87, 0.96), x: 0.2, y: 0.85, radius: 0.5),
-            Blob(RGB(0.62, 0.58, 0.82), x: 0.85, y: 0.15, radius: 0.55),
-        ], grain: 0.035),
-        BackgroundPreset(name: "Sand", base: RGB(0.87, 0.80, 0.68), blobs: [
-            Blob(RGB(0.95, 0.91, 0.81), x: 0.2, y: 0.85, radius: 0.5),
-            Blob(RGB(0.74, 0.65, 0.52), x: 0.85, y: 0.15, radius: 0.55),
-        ], grain: 0.035),
-        BackgroundPreset(name: "Sky", base: RGB(0.72, 0.83, 0.93), blobs: [
-            Blob(RGB(0.87, 0.93, 0.98), x: 0.2, y: 0.85, radius: 0.5),
-            Blob(RGB(0.54, 0.70, 0.86), x: 0.85, y: 0.15, radius: 0.55),
-        ], grain: 0.03),
-        // Richer washes, like a blurred photo.
-        BackgroundPreset(name: "Meadow", base: RGB(0.44, 0.52, 0.30), blobs: [
-            Blob(RGB(0.70, 0.76, 0.46), x: 0.15, y: 0.85, radius: 0.45),
-            Blob(RGB(0.30, 0.38, 0.18), x: 0.85, y: 0.15, radius: 0.6),
-            Blob(RGB(0.62, 0.68, 0.40), x: 0.6, y: 0.6, radius: 0.35),
-        ]),
-        BackgroundPreset(name: "Peach", base: RGB(0.86, 0.62, 0.48), blobs: [
-            Blob(RGB(0.45, 0.55, 0.70), x: 0.1, y: 0.9, radius: 0.5),
-            Blob(RGB(0.95, 0.45, 0.40), x: 0.9, y: 0.3, radius: 0.5),
-            Blob(RGB(0.98, 0.88, 0.70), x: 0.45, y: 0.4, radius: 0.25),
-        ]),
-        BackgroundPreset(name: "Sunset", base: RGB(0.92, 0.50, 0.36), blobs: [
-            Blob(RGB(0.98, 0.78, 0.40), x: 0.2, y: 0.8, radius: 0.5),
-            Blob(RGB(0.55, 0.25, 0.50), x: 0.85, y: 0.15, radius: 0.6),
-            Blob(RGB(0.98, 0.45, 0.55), x: 0.55, y: 0.5, radius: 0.35),
-        ]),
-        BackgroundPreset(name: "Ocean", base: RGB(0.10, 0.32, 0.52), blobs: [
-            Blob(RGB(0.30, 0.75, 0.80), x: 0.2, y: 0.8, radius: 0.5),
-            Blob(RGB(0.05, 0.12, 0.30), x: 0.9, y: 0.1, radius: 0.6),
-            Blob(RGB(0.45, 0.65, 0.90), x: 0.6, y: 0.55, radius: 0.35),
-        ]),
-        BackgroundPreset(name: "Dusk", base: RGB(0.22, 0.16, 0.38), blobs: [
-            Blob(RGB(0.72, 0.30, 0.60), x: 0.15, y: 0.85, radius: 0.5),
-            Blob(RGB(0.08, 0.06, 0.18), x: 0.9, y: 0.1, radius: 0.6),
-            Blob(RGB(0.35, 0.30, 0.70), x: 0.6, y: 0.5, radius: 0.4),
-        ]),
-        // Neutrals.
-        BackgroundPreset(name: "Cocoa", base: RGB(0.16, 0.115, 0.11), blobs: [
-            Blob(RGB(0.075, 0.06, 0.06), x: 0.0, y: 0.4, radius: 0.7),
-            Blob(RGB(0.26, 0.18, 0.165), x: 1.0, y: 0.75, radius: 0.65),
-        ], grain: 0.055),
-        BackgroundPreset(name: "Grey", base: RGB(0.50, 0.50, 0.52), blobs: [
-            Blob(RGB(0.60, 0.60, 0.62), x: 0.2, y: 0.85, radius: 0.5),
-            Blob(RGB(0.40, 0.40, 0.42), x: 0.85, y: 0.15, radius: 0.55),
-        ], grain: 0.045),
-        BackgroundPreset(name: "Graphite", base: RGB(0.14, 0.14, 0.15), blobs: [
-            Blob(RGB(0.26, 0.26, 0.28), x: 0.2, y: 0.85, radius: 0.5),
-            Blob(RGB(0.06, 0.06, 0.07), x: 0.9, y: 0.1, radius: 0.6),
-        ], grain: 0.05),
-    ]
 }
 
 /// How you appear in the video.
@@ -342,9 +255,9 @@ public struct Scene: Sendable, Equatable {
     public static let presets: [Scene] = [
         Scene(name: "Classic", screen: .flat, background: .screen, presenter: Presenter(style: .cutout)),
         Scene(name: "Studio", screen: .tilted, background: .screen, presenter: Presenter(style: .cutout)),
-        Scene(name: "Showcase", screen: .card, background: .preset("Meadow"), presenter: Presenter(style: .glass, tile: .portrait)),
-        Scene(name: "Desk", screen: .card, background: .preset("Peach"), presenter: Presenter(style: .glass, tile: .landscape)),
-        Scene(name: "Night", screen: .card, background: .preset("Graphite"), presenter: Presenter(style: .cutout)),
+        Scene(name: "Showcase", screen: .card, background: .preset("Petal"), presenter: Presenter(style: .glass, tile: .portrait)),
+        Scene(name: "Desk", screen: .card, background: .preset("Dune"), presenter: Presenter(style: .glass, tile: .landscape)),
+        Scene(name: "Night", screen: .card, background: .preset("Aurora"), presenter: Presenter(style: .cutout)),
     ]
 }
 

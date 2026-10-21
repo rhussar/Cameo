@@ -137,6 +137,32 @@ final class RecorderModel {
         background = scene.background
         screenStyle = scene.screen
     }
+    /// Your colour background, kept while another background is chosen so picking Colour again brings it back.
+    var colorBackground: Background {
+        didSet {
+            if let data = try? JSONEncoder().encode(colorBackground) { UserDefaults.standard.set(data, forKey: "colorBackground") }
+            if case .color = background { background = colorBackground }
+        }
+    }
+    /// The colour of the colour background, for the colour picker.
+    var backgroundColor: NSColor {
+        get {
+            guard case .color(let r, let g, let b, _) = colorBackground else { return .gray }
+            return NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
+        }
+        set {
+            guard case .color(_, _, _, let texture) = colorBackground, let c = newValue.usingColorSpace(.sRGB) else { return }
+            colorBackground = .color(r: Double(c.redComponent), g: Double(c.greenComponent), b: Double(c.blueComponent), texture: texture)
+        }
+    }
+    /// Grain on the colour background, from smooth to grainy.
+    var backgroundTexture: Double {
+        get { if case .color(_, _, _, let t) = colorBackground { t } else { 0 } }
+        set {
+            guard case .color(let r, let g, let b, _) = colorBackground else { return }
+            colorBackground = .color(r: r, g: g, b: b, texture: newValue)
+        }
+    }
     /// Lets you pick a picture for the background.
     func chooseBackgroundImage() {
         let panel = NSOpenPanel()
@@ -315,7 +341,12 @@ final class RecorderModel {
         mirror = d.bool(forKey: "mirror")
         // "styled" was the old on/off for the tilted card.
         screenStyle = d.string(forKey: "screenStyle").flatMap(ScreenStyle.init(rawValue:)) ?? (d.bool(forKey: "styled") ? .tilted : .flat)
-        background = d.data(forKey: "background").flatMap { try? JSONDecoder().decode(Background.self, from: $0) } ?? .screen
+        var saved = d.data(forKey: "background").flatMap { try? JSONDecoder().decode(Background.self, from: $0) } ?? .screen
+        // Wallpapers from older versions are gone; take the first of today's instead.
+        if case .preset(let name) = saved, Wallpaper.named(name) == nil { saved = .preset(Wallpaper.all[0].name) }
+        background = saved
+        colorBackground = d.data(forKey: "colorBackground").flatMap { try? JSONDecoder().decode(Background.self, from: $0) }
+            ?? Background.defaultColor
         presenter = d.data(forKey: "presenter").flatMap { try? JSONDecoder().decode(Presenter.self, from: $0) } ?? Presenter()
         tilt = d.object(forKey: "tilt") as? Double ?? Stage().tilt
         zoomShortcut = d.data(forKey: "zoomShortcut").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .defaultZoom

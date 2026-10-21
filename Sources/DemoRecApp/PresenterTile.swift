@@ -42,7 +42,7 @@ struct PresenterTile: View {
     }
 }
 
-/// A little picture of a background for the scene panel.
+/// A little picture of a background for the scene panel. Wallpapers are drawn by the same code as the video.
 struct BackgroundSwatch: View {
     let background: Background
 
@@ -52,20 +52,15 @@ struct BackgroundSwatch: View {
             LinearGradient(colors: [Color(white: 0.35), Color(white: 0.15)], startPoint: .topLeading, endPoint: .bottomTrailing)
                 .overlay(Image(systemName: "display").font(.system(size: 13)).foregroundStyle(.white.opacity(0.7)))
         case .preset(let name):
-            if let p = BackgroundPreset.named(name) {
-                ZStack {
-                    color(p.base)
-                    ForEach(Array(p.blobs.enumerated()), id: \.offset) { _, blob in
-                        GeometryReader { geo in
-                            let r = blob.radius * max(geo.size.width, geo.size.height)
-                            RadialGradient(colors: [color(blob.color).opacity(0.95), color(blob.color).opacity(0)],
-                                           center: .init(x: blob.x, y: 1 - blob.y), startRadius: 0, endRadius: r)
-                        }
-                    }
-                }
+            if let img = WallpaperThumbnails.image(name) {
+                Image(decorative: img, scale: 1).resizable().scaledToFill()
             } else {
                 Color.gray
             }
+        case .color(let r, let g, let b, _):
+            // Same light from the top left as the video's colour background.
+            Color(red: r, green: g, blue: b)
+                .overlay(LinearGradient(colors: [.white.opacity(0.10), .black.opacity(0.14)], startPoint: .topLeading, endPoint: .bottomTrailing))
         case .image(let path, _):
             if let img = NSImage(contentsOfFile: path) {
                 Image(nsImage: img).resizable().scaledToFill()
@@ -74,6 +69,17 @@ struct BackgroundSwatch: View {
             }
         }
     }
+}
 
-    private func color(_ c: BackgroundPreset.RGB) -> Color { Color(red: c.r, green: c.g, blue: c.b) }
+/// Small renders of each wallpaper, made once.
+@MainActor
+enum WallpaperThumbnails {
+    private static var cache: [String: CGImage] = [:]
+
+    static func image(_ name: String) -> CGImage? {
+        if let img = cache[name] { return img }
+        guard let img = Wallpaper.named(name)?.render(width: 192, height: 120) else { return nil }
+        cache[name] = img
+        return img
+    }
 }

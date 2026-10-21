@@ -27,11 +27,12 @@ presets (Natural, Bright, Warm, Cool, Vivid, Mono) and brightness / contrast / c
 sliders for you; the preview updates live. The CLI takes the same as `--format` and `--look`.
 
 **Scene** picks the whole look at once: *Classic* (flat screen, you cut out in a corner), *Studio* (a tilted
-card over a blurred copy of the screen), *Showcase* (a straight padded card on a soft green wash, you in a
-portrait glass tile), *Desk* (the same on a peach wash with a landscape tile) and *Night*. Under the presets
+card over a blurred copy of the screen), *Showcase* (a straight padded card on the Petal wallpaper, you in a
+portrait glass tile), *Desk* (the same on Dune with a landscape tile) and *Night* (Aurora). Under the presets
 are the three choices they're made of: **Screen** flat, card or tilted (tilted gets a tilt slider); **Background**
-a blurred copy of the screen, one of fourteen washes (soft pastel cards with a fine grain, richer colour washes, and grey, cocoa and graphite), or a picture of your own (**Picture…**, with a
-soften toggle); and **You** as a cutout or a **glass tile** (portrait, square or landscape) that shows the
+a blurred copy of the screen, one of nine wallpapers (Dune, Lagoon, Horizon, Petal, Night Petal,
+Aurora, Ember, Silk, Slate), a **Colour** of your own with a texture slider from smooth to grainy, or a picture
+of your own (**Picture…**, with a soften toggle); and **You** as a cutout or a **glass tile** (portrait, square or landscape) that shows the
 whole camera picture in a rounded frosted frame with a bright rim and a soft shadow. A glass tile skips
 person segmentation, so it's also the lightest on the Mac. The background only shows where the screen
 doesn't fill the frame, so picking one for a flat screen puts the screen on a card. The CLI has the same
@@ -118,7 +119,8 @@ relative to the output frame height.
 | flag | default | meaning |
 |---|---|---|
 | `--scene` | – | a whole look at once: classic, studio, showcase, desk, night (the flags below override its parts) |
-| `--background` | screen | screen (a blurred copy of it), a wash (mist, sage, blush, lavender, sand, sky, meadow, peach, sunset, ocean, dusk, cocoa, grey, graphite), or the path of a picture |
+| `--background` | screen | screen (a blurred copy of it), a wallpaper (dune, lagoon, horizon, petal, night-petal, aurora, ember, silk, slate), a colour like `#5a6a80`, or the path of a picture |
+| `--texture` | `0.03` | grain on a colour background, 0 (smooth) to 0.12 (grainy) |
 | `--background-blur` | `0.012` | blur for a background picture, 0 = sharp |
 | `--presenter` | cutout | cutout, or glass (the whole camera picture in a glass tile; no segmentation) |
 | `--tile` | portrait | glass tile shape: portrait, square, landscape |
