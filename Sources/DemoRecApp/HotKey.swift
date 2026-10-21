@@ -25,6 +25,7 @@ struct Shortcut: Codable, Equatable {
 
     static let defaultZoom = Shortcut(keyCode: UInt32(kVK_ANSI_Z), modifiers: UInt32(controlKey | optionKey), label: "⌃⌥Z")
     static let defaultTrail = Shortcut(keyCode: UInt32(kVK_ANSI_D), modifiers: UInt32(controlKey | optionKey), label: "⌃⌥D")
+    static let defaultHighlight = Shortcut(keyCode: UInt32(kVK_ANSI_H), modifiers: UInt32(controlKey | optionKey), label: "⌃⌥H")
 
     /// The shortcut a key press makes. Nil for a plain key without ⌘, ⌃ or ⌥ (it would take over typing that key
     /// everywhere), except the F-keys, which are fine on their own.

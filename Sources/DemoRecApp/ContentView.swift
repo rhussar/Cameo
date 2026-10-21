@@ -140,6 +140,7 @@ private struct BottomBar: View {
             }
             ShortcutButton(model: model, slot: .zoom)
             ShortcutButton(model: model, slot: .trail)
+            ShortcutButton(model: model, slot: .highlight)
         }
     }
 
@@ -195,7 +196,7 @@ private struct RecordingsMenu: View {
     }
 }
 
-/// A shortcut (zoom, or the trail you draw while holding it): shows it, and click to set a new one.
+/// A shortcut (zoom, the trail you draw while holding it, or the highlight box): shows it, and click to set a new one.
 private struct ShortcutButton: View {
     @Bindable var model: RecorderModel
     let slot: RecorderModel.ShortcutSlot
@@ -213,30 +214,48 @@ private struct ShortcutButton: View {
         .fixedSize()
         .help(help)
         if needsAccess, !capturing {
-            Button("Allow Mouse", action: model.requestMouseAccess)
+            Button(slot == .highlight ? "Allow Access" : "Allow Mouse", action: model.requestMouseAccess)
                 .buttonStyle(.borderedProminent)
-                .help("Cameo needs Accessibility access to use a mouse button as a shortcut")
+                .help(slot == .highlight ? "Cameo needs Accessibility access to see what's under the pointer"
+                                         : "Cameo needs Accessibility access to use a mouse button as a shortcut")
         }
     }
 
     private var capturing: Bool { model.capturingShortcut == slot }
-    private var name: String { slot == .zoom ? "Zoom" : "Trail" }
-    private var shortcut: Shortcut { slot == .zoom ? model.zoomShortcut : model.trailShortcut }
-    private var taken: Bool { slot == .zoom ? model.zoomShortcutTaken : model.trailShortcutTaken }
-    private var needsAccess: Bool { slot == .zoom ? model.zoomShortcutNeedsAccess : model.trailShortcutNeedsAccess }
+    private var name: String {
+        switch slot { case .zoom: "Zoom"; case .trail: "Trail"; case .highlight: "Highlight" }
+    }
+    private var shortcut: Shortcut {
+        switch slot { case .zoom: model.zoomShortcut; case .trail: model.trailShortcut; case .highlight: model.highlightShortcut }
+    }
+    private var taken: Bool {
+        switch slot { case .zoom: model.zoomShortcutTaken; case .trail: model.trailShortcutTaken; case .highlight: model.highlightShortcutTaken }
+    }
+    private var needsAccess: Bool {
+        switch slot {
+        case .zoom: model.zoomShortcutNeedsAccess
+        case .trail: model.trailShortcutNeedsAccess
+        case .highlight: model.highlightShortcutNeedsAccess
+        }
+    }
     private var problem: Bool { taken || needsAccess }
     private var icon: String {
         if shortcut.mouseButton != nil { return "computermouse" }
-        return slot == .zoom ? "plus.magnifyingglass" : "scribble"
+        switch slot { case .zoom: return "plus.magnifyingglass"; case .trail: return "scribble"; case .highlight: return "rectangle.dashed" }
     }
 
     private var help: String {
         if capturing {
-            return "Press the shortcut you want for \(slot == .zoom ? "zooming" : "the trail"): a key combo, or a mouse button "
+            let what = switch slot { case .zoom: "zooming"; case .trail: "the trail"; case .highlight: "highlighting" }
+            return "Press the shortcut you want for \(what): a key combo, or a mouse button "
                 + "with the pointer over Cameo (middle, back, forward or a side button). Esc cancels."
         }
         if needsAccess {
             return "To use \(shortcut.label), allow Cameo under Privacy & Security > Accessibility."
+        }
+        if slot == .highlight {
+            return "Press \(shortcut.label) to box what's under the pointer for a couple of seconds: just the button or link, "
+                + "the paragraph, or the panel you're pointing at. Try it on the preview. Click to change the shortcut."
         }
         if taken { return "\(shortcut.label) is already in use. Click to choose a different shortcut." }
         if slot == .trail {

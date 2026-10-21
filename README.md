@@ -55,6 +55,14 @@ green glowing trail that fades about a second and a half after you draw it. Clic
 to pick a different key (same rules as Zoom; an F-key or a spare mouse button is easiest to hold). The trail
 is drawn on the screen, so it zooms with it. Try it on the setup preview; the live preview shows it while recording too.
 
+**Highlight** boxes what you're pointing at: press **⌃⌥H** and a green box pops in around whatever's under the
+pointer, stays a couple of seconds and fades. It works out what you mean from the app's own layout: over a
+button or link it boxes just that, over text the paragraph (or heading) it's in, and over empty space the panel or
+container you're in. It needs Accessibility access (Privacy & Security > Accessibility), which the **Highlight ⌃⌥H**
+button asks for; click it to pick a different shortcut. Like the trail, it zooms with the screen and shows on the
+previews. Chrome and Electron apps describe their web pages to Cameo once asked, so the first press there may box
+a bigger area than you meant; press again.
+
 ## Build (CLI)
 
 ```bash

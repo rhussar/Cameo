@@ -53,6 +53,7 @@ final class LivePreview {
                 link.zoom?.moved(map(p))
             case .inkDown(let p): ink.begin(map(p))
             case .inkUp: ink.end()
+            case .highlight(let h): ink.highlight(CursorTrack.Highlight(t: h.t + offset, x: h.x, y: h.y, w: h.w, h: h.h).cropped(to: c))
             case .click(let p):
                 let q = map(p)
                 if inside(q) { link.zoom?.clicked(q) }

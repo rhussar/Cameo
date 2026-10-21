@@ -11,6 +11,21 @@ public struct CursorTrack: Codable, Sendable {
         public var y: Double
         public init(t: Double, x: Double, y: Double) { self.t = t; self.x = x; self.y = y }
     }
+    /// A box drawn around part of the screen for a moment, at `t`. Fractions of the recorded area, top-left origin.
+    public struct Highlight: Codable, Sendable {
+        public var t: Double
+        public var x: Double
+        public var y: Double
+        public var w: Double
+        public var h: Double
+        public init(t: Double, x: Double, y: Double, w: Double, h: Double) { self.t = t; self.x = x; self.y = y; self.w = w; self.h = h }
+
+        /// The same box in the coordinates of a crop of the recorded area.
+        public func cropped(to crop: CGRect) -> Highlight {
+            guard crop.width > 0, crop.height > 0 else { return self }
+            return Highlight(t: t, x: (x - crop.minX) / crop.width, y: (y - crop.minY) / crop.height, w: w / crop.width, h: h / crop.height)
+        }
+    }
     public var samples: [Point] = []
     public var clicks: [Point] = []
     /// Where you pressed the zoom shortcut to zoom in.
@@ -21,6 +36,8 @@ public struct CursorTrack: Codable, Sendable {
     /// The pointer's path while you held the trail shortcut, one stroke per hold. Drawn as a green trail that fades.
     /// nil in recordings from before the trail shortcut.
     public var ink: [[Point]]?
+    /// Where you pressed the highlight shortcut: the box around what was under the pointer. nil in older recordings.
+    public var highlights: [Highlight]?
 
     public init() {}
 
@@ -47,6 +64,7 @@ public struct CursorTrack: Codable, Sendable {
         out.marks = marks.map(map).filter(inside)
         out.zoomOuts = zoomOuts
         out.ink = ink?.map { $0.map(map) }
+        out.highlights = highlights?.map { $0.cropped(to: crop) }
         return out
     }
 }
@@ -77,6 +95,8 @@ public final class CursorRecorder: @unchecked Sendable {
         /// The trail shortcut went down here; the moves that follow, until `inkUp`, are the stroke.
         case inkDown(CursorTrack.Point)
         case inkUp
+        /// The highlight shortcut: box this part of the screen for a moment.
+        case highlight(CursorTrack.Highlight)
     }
     /// Called on the recorder's own queue as things happen. Set it before `start()`.
     public var onEvent: ((Event) -> Void)?
@@ -89,6 +109,7 @@ public final class CursorRecorder: @unchecked Sendable {
         self.keepsTrack = keepsTrack
         track.zoomOuts = []
         track.ink = []
+        track.highlights = []
     }
 
     public func start() {
@@ -134,6 +155,19 @@ public final class CursorRecorder: @unchecked Sendable {
                 lock.unlock()
             }
             if let p { onEvent?(.inkDown(p)) }
+        }
+    }
+
+    /// Boxes `rect` (global points, top-left origin, like the pointer) for a moment, from now.
+    public func highlight(_ rect: CGRect) {
+        queue.async { [self] in
+            guard area.width > 0, area.height > 0 else { return }
+            let t = (SharedClock.now() - startTime).seconds
+            guard t >= 0 else { return }
+            let h = CursorTrack.Highlight(t: t, x: (rect.minX - area.minX) / area.width, y: (rect.minY - area.minY) / area.height,
+                                          w: rect.width / area.width, h: rect.height / area.height)
+            if keepsTrack { lock.lock(); track.highlights?.append(h); lock.unlock() }
+            onEvent?(.highlight(h))
         }
     }
 

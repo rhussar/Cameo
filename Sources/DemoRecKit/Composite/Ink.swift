@@ -2,29 +2,85 @@ import CoreGraphics
 import CoreImage
 import CoreImage.CIFilterBuiltins
 
-/// The green trail the pointer leaves while you hold the trail shortcut. Each bit of the trail fades out on its own
-/// a moment after it was drawn, like a laser pointer, so the trail follows the pointer and then disappears.
+/// The green trail the pointer leaves while you hold the trail shortcut, and the green boxes from the highlight
+/// shortcut. Each bit of the trail fades out on its own a moment after it was drawn, like a laser pointer, so the
+/// trail follows the pointer and then disappears. A box pops in, stays a couple of seconds, and fades.
 public struct InkTrail {
     private let strokes: [[CursorTrack.Point]]
+    private let highlights: [CursorTrack.Highlight]
     /// Seconds a bit of trail stays before it's gone.
     public var fade = InkTrail.defaultFade
     public static let defaultFade = 1.5
+    /// Seconds a highlight box stays, fading in and out included.
+    public static let highlightDuration = 2.5
 
     public static let color = CIColor(red: 0.2, green: 0.85, blue: 0.35)
 
     public init?(track: CursorTrack) {
-        self.init(strokes: track.ink ?? [])
+        self.init(strokes: track.ink ?? [], highlights: track.highlights ?? [])
     }
 
-    public init?(strokes: [[CursorTrack.Point]]) {
+    public init?(strokes: [[CursorTrack.Point]], highlights: [CursorTrack.Highlight] = []) {
         let ink = strokes.filter { !$0.isEmpty }
-        guard !ink.isEmpty else { return nil }
+        guard !ink.isEmpty || !highlights.isEmpty else { return nil }
         self.strokes = ink
+        self.highlights = highlights
     }
 
-    /// The trail at time `t` (seconds on the cursor track's clock) over a screen of `size` pixels, or nil when
-    /// there's nothing to draw.
+    /// The trail and boxes at time `t` (seconds on the cursor track's clock) over a screen of `size` pixels, or nil
+    /// when there's nothing to draw.
     public func image(at t: Double, size: CGSize) -> CIImage? {
+        let trail = trailImage(at: t, size: size)
+        guard let boxes = highlightImage(at: t, size: size) else { return trail }
+        return trail.map { $0.composited(over: boxes) } ?? boxes
+    }
+
+    private func highlightImage(at t: Double, size: CGSize) -> CIImage? {
+        let showing = highlights.filter { t >= $0.t && t - $0.t < Self.highlightDuration }
+        guard !showing.isEmpty else { return nil }
+        let line = max(3, size.height * 0.0025)
+        let pad = max(4, size.height * 0.004)
+        let glow = line * 4
+        let bounds = CGRect(origin: .zero, size: size)
+
+        var drawn: [(rect: CGRect, a: CGFloat)] = []
+        for h in showing {
+            let age = t - h.t
+            let fadeIn = min(age / 0.15, 1)
+            let fadeOut = min((Self.highlightDuration - age) / 0.5, 1)
+            // A little pop: starts a touch bigger and settles onto the element.
+            let settle = min(age / 0.25, 1)
+            let grow = 1 + 0.06 * pow(1 - settle, 3)
+            var r = CGRect(x: h.x * size.width, y: (1 - h.y - h.h) * size.height, width: h.w * size.width, height: h.h * size.height)
+                .insetBy(dx: -pad, dy: -pad)
+            r = r.insetBy(dx: -r.width * (grow - 1) / 2, dy: -r.height * (grow - 1) / 2)
+            drawn.append((r, CGFloat(fadeIn * fadeOut)))
+        }
+        let box = drawn.reduce(CGRect.null) { $0.union($1.rect) }.insetBy(dx: -glow * 2, dy: -glow * 2).intersection(bounds).integral
+        guard box.width >= 1, box.height >= 1,
+              let ctx = CGContext(data: nil, width: Int(box.width), height: Int(box.height), bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.translateBy(x: -box.minX, y: -box.minY)
+        let c = Self.color
+        for (rect, a) in drawn {
+            let radius = min(size.height * 0.008, min(rect.width, rect.height) / 2)
+            let path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+            ctx.setFillColor(red: c.red, green: c.green, blue: c.blue, alpha: 0.1 * a)
+            ctx.addPath(path)
+            ctx.fillPath()
+            ctx.setShadow(offset: .zero, blur: glow, color: CGColor(srgbRed: c.red, green: c.green, blue: c.blue, alpha: 0.8 * a))
+            ctx.setStrokeColor(red: c.red, green: c.green, blue: c.blue, alpha: a)
+            ctx.setLineWidth(line)
+            ctx.addPath(path)
+            ctx.strokePath()
+            ctx.setShadow(offset: .zero, blur: 0, color: nil)
+        }
+        guard let cg = ctx.makeImage() else { return nil }
+        return CIImage(cgImage: cg).transformed(by: CGAffineTransform(translationX: box.minX, y: box.minY))
+    }
+
+    private func trailImage(at t: Double, size: CGSize) -> CIImage? {
         // How strong each point is now: 1 when just drawn, easing to 0 at `fade`.
         var visible: [[(p: CGPoint, a: CGFloat)]] = []
         for stroke in strokes {
@@ -95,12 +151,13 @@ public struct InkTrail {
     }
 }
 
-/// The trail as it's being drawn, for live previews: strokes come in from the pointer watcher's queue and the
-/// preview draws them on its own. Strokes that have faded away are forgotten.
+/// The trail and boxes as they happen, for live previews: they come in from the pointer watcher's queue and the
+/// preview draws them on its own. Ones that have faded away are forgotten.
 public final class LiveInk: @unchecked Sendable {
     private let lock = NSLock()
     private var strokes: [[CursorTrack.Point]] = []
     private var drawing = false
+    private var highlights: [CursorTrack.Highlight] = []
     private let fade = InkTrail.defaultFade
 
     public init() {}
@@ -118,22 +175,30 @@ public final class LiveInk: @unchecked Sendable {
         lock.withLock { drawing = false }
     }
 
+    public func highlight(_ h: CursorTrack.Highlight) {
+        lock.withLock { highlights.append(h) }
+    }
+
     public func clear() {
-        lock.withLock { drawing = false; strokes = [] }
+        lock.withLock { drawing = false; strokes = []; highlights = [] }
     }
 
     /// Whether there's anything on screen at `t`, so the preview knows to keep redrawing.
     public func isVisible(at t: Double) -> Bool {
-        lock.withLock { drawing || strokes.contains { ($0.last?.t ?? -.infinity) > t - fade } }
+        lock.withLock {
+            drawing || strokes.contains { ($0.last?.t ?? -.infinity) > t - fade }
+                || highlights.contains { $0.t > t - InkTrail.highlightDuration }
+        }
     }
 
     public func image(at t: Double, size: CGSize) -> CIImage? {
-        let current = lock.withLock { () -> [[CursorTrack.Point]] in
+        let (current, boxes) = lock.withLock { () -> ([[CursorTrack.Point]], [CursorTrack.Highlight]) in
             let held = drawing ? strokes.popLast() : nil
             strokes.removeAll { ($0.last?.t ?? -.infinity) <= t - fade }
             if let held { strokes.append(held) }
-            return strokes
+            highlights.removeAll { $0.t <= t - InkTrail.highlightDuration }
+            return (strokes, highlights)
         }
-        return InkTrail(strokes: current)?.image(at: t, size: size)
+        return InkTrail(strokes: current, highlights: boxes)?.image(at: t, size: size)
     }
 }
