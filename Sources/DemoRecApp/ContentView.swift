@@ -213,6 +213,12 @@ private struct ShortcutButton: View {
         .buttonStyle(.bordered)
         .fixedSize()
         .help(help)
+        if let color {
+            ColorPicker(name, selection: color, supportsOpacity: false)
+                .labelsHidden()
+                .fixedSize()
+                .help("\(name) colour")
+        }
         if needsAccess, !capturing {
             Button(slot == .highlight ? "Allow Access" : "Allow Mouse", action: model.requestMouseAccess)
                 .buttonStyle(.borderedProminent)
@@ -222,6 +228,21 @@ private struct ShortcutButton: View {
     }
 
     private var capturing: Bool { model.capturingShortcut == slot }
+    /// The trail's or highlight's colour; zoom has none.
+    private var color: Binding<Color>? {
+        let rgb: ReferenceWritableKeyPath<RecorderModel, RGB>
+        switch slot {
+        case .zoom: return nil
+        case .trail: rgb = \.trailColor
+        case .highlight: rgb = \.highlightColor
+        }
+        return Binding(
+            get: { Color(.sRGB, red: model[keyPath: rgb].r, green: model[keyPath: rgb].g, blue: model[keyPath: rgb].b) },
+            set: { new in
+                guard let c = NSColor(new).usingColorSpace(.sRGB) else { return }
+                model[keyPath: rgb] = RGB(r: Double(c.redComponent), g: Double(c.greenComponent), b: Double(c.blueComponent))
+            })
+    }
     private var name: String {
         switch slot { case .zoom: "Zoom"; case .trail: "Trail"; case .highlight: "Highlight" }
     }

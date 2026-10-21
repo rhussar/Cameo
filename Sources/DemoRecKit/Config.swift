@@ -42,6 +42,10 @@ public struct Layout: Sendable, Codable, Equatable {
     public var background: Background = .screen
     /// How you appear: a background-removed cutout, or the whole camera picture in a glass tile.
     public var presenter = Presenter()
+    /// Colour of the trail you draw while holding the trail shortcut.
+    public var trailColor = RGB.green
+    /// Colour of the box from the highlight shortcut.
+    public var highlightColor = RGB.green
 
     public init(corner: Corner = .bottomRight, scale: Double = 0.35, margin: Double = 24, feather: Double = 2, mirror: Bool = false) {
         self.corner = corner
@@ -53,6 +57,7 @@ public struct Layout: Sendable, Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case corner, scale, margin, feather, mirror, stage, canvas, look, position, crop, background, presenter
+        case trailColor, highlightColor
     }
 
     /// Layouts saved by older versions lack the newer keys; they take the defaults.
@@ -70,7 +75,20 @@ public struct Layout: Sendable, Codable, Equatable {
         crop = try c.decodeIfPresent(CGRect.self, forKey: .crop)
         background = try c.decodeIfPresent(Background.self, forKey: .background) ?? .screen
         presenter = try c.decodeIfPresent(Presenter.self, forKey: .presenter) ?? Presenter()
+        trailColor = try c.decodeIfPresent(RGB.self, forKey: .trailColor) ?? .green
+        highlightColor = try c.decodeIfPresent(RGB.self, forKey: .highlightColor) ?? .green
     }
+}
+
+/// A colour in sRGB, 0...1.
+public struct RGB: Sendable, Codable, Equatable, Hashable {
+    public var r: Double
+    public var g: Double
+    public var b: Double
+    public init(r: Double, g: Double, b: Double) { self.r = r; self.g = g; self.b = b }
+
+    /// The trail's and highlight's colour unless you pick another.
+    public static let green = RGB(r: 0.2, g: 0.85, b: 0.35)
 }
 
 /// What fills the frame behind the screen.

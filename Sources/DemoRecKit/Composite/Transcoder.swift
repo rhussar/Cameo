@@ -184,7 +184,9 @@ public final class Transcoder {
             let zoomedFrames = zoomPath.filter { $0.scale > 1.01 }.count
             print(String(format: "zoom: %d moments, zoomed in for %.1f s", moments, Double(zoomedFrames) / Double(fps)))
         }
-        let inkTrail = cursor.flatMap(InkTrail.init(track:))
+        var inkTrail = cursor.flatMap(InkTrail.init(track:))
+        inkTrail?.trailColor = layout.trailColor
+        inkTrail?.highlightColor = layout.highlightColor
         let black = CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: recordedSize))
         let started = Date()
         var frameIndex = 0

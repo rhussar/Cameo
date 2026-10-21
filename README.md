@@ -63,6 +63,8 @@ button asks for; click it to pick a different shortcut. Like the trail, it zooms
 previews. Chrome and Electron apps describe their web pages to Cameo once asked, so the first press there may box
 a bigger area than you meant; press again.
 
+The colour well next to **Trail** and **Highlight** sets each one's colour (green unless you pick another).
+
 ## Build (CLI)
 
 ```bash

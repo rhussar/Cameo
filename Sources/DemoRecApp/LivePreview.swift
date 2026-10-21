@@ -62,7 +62,12 @@ final class LivePreview {
     }
 
     /// Called when recording starts. Opens the window if you had it on last time.
+    func setInkColors(trail: RGB, highlight: RGB) {
+        ink.setColors(trail: trail, highlight: highlight)
+    }
+
     func start(model: RecorderModel, camera: CameraRecorder, target: CaptureTarget?) {
+        setInkColors(trail: model.trailColor, highlight: model.highlightColor)
         self.model = model
         self.camera = camera
         self.target = target

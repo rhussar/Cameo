@@ -14,7 +14,8 @@ public struct InkTrail {
     /// Seconds a highlight box stays, fading in and out included.
     public static let highlightDuration = 2.5
 
-    public static let color = CIColor(red: 0.2, green: 0.85, blue: 0.35)
+    public var trailColor = RGB.green
+    public var highlightColor = RGB.green
 
     public init?(track: CursorTrack) {
         self.init(strokes: track.ink ?? [], highlights: track.highlights ?? [])
@@ -62,15 +63,15 @@ public struct InkTrail {
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         ctx.translateBy(x: -box.minX, y: -box.minY)
-        let c = Self.color
+        let c = highlightColor
         for (rect, a) in drawn {
             let radius = min(size.height * 0.008, min(rect.width, rect.height) / 2)
             let path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
-            ctx.setFillColor(red: c.red, green: c.green, blue: c.blue, alpha: 0.1 * a)
+            ctx.setFillColor(red: c.r, green: c.g, blue: c.b, alpha: 0.1 * a)
             ctx.addPath(path)
             ctx.fillPath()
-            ctx.setShadow(offset: .zero, blur: glow, color: CGColor(srgbRed: c.red, green: c.green, blue: c.blue, alpha: 0.8 * a))
-            ctx.setStrokeColor(red: c.red, green: c.green, blue: c.blue, alpha: a)
+            ctx.setShadow(offset: .zero, blur: glow, color: CGColor(srgbRed: c.r, green: c.g, blue: c.b, alpha: 0.8 * a))
+            ctx.setStrokeColor(red: c.r, green: c.g, blue: c.b, alpha: a)
             ctx.setLineWidth(line)
             ctx.addPath(path)
             ctx.strokePath()
@@ -136,11 +137,12 @@ public struct InkTrail {
         guard let cg = ctx.makeImage() else { return nil }
 
         let mask = CIImage(cgImage: cg).transformed(by: CGAffineTransform(translationX: box.minX, y: box.minY))
-        let green = CIImage(color: Self.color).cropped(to: box)
+        let color = CIImage(color: CIColor(red: trailColor.r, green: trailColor.g, blue: trailColor.b,
+                                           colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)!).cropped(to: box)
         let clear = CIImage(color: .clear).cropped(to: box)
         func tinted(_ m: CIImage) -> CIImage {
             let blend = CIFilter.blendWithMask()
-            blend.inputImage = green
+            blend.inputImage = color
             blend.backgroundImage = clear
             blend.maskImage = m
             return blend.outputImage ?? clear
@@ -158,6 +160,7 @@ public final class LiveInk: @unchecked Sendable {
     private var strokes: [[CursorTrack.Point]] = []
     private var drawing = false
     private var highlights: [CursorTrack.Highlight] = []
+    private var colors = (trail: RGB.green, highlight: RGB.green)
     private let fade = InkTrail.defaultFade
 
     public init() {}
@@ -179,6 +182,10 @@ public final class LiveInk: @unchecked Sendable {
         lock.withLock { highlights.append(h) }
     }
 
+    public func setColors(trail: RGB, highlight: RGB) {
+        lock.withLock { colors = (trail, highlight) }
+    }
+
     public func clear() {
         lock.withLock { drawing = false; strokes = []; highlights = [] }
     }
@@ -192,13 +199,16 @@ public final class LiveInk: @unchecked Sendable {
     }
 
     public func image(at t: Double, size: CGSize) -> CIImage? {
-        let (current, boxes) = lock.withLock { () -> ([[CursorTrack.Point]], [CursorTrack.Highlight]) in
+        let (current, boxes, colors) = lock.withLock { () -> ([[CursorTrack.Point]], [CursorTrack.Highlight], (trail: RGB, highlight: RGB)) in
             let held = drawing ? strokes.popLast() : nil
             strokes.removeAll { ($0.last?.t ?? -.infinity) <= t - fade }
             if let held { strokes.append(held) }
             highlights.removeAll { $0.t <= t - InkTrail.highlightDuration }
-            return (strokes, highlights)
+            return (strokes, highlights, self.colors)
         }
-        return InkTrail(strokes: current, highlights: boxes)?.image(at: t, size: size)
+        guard var trail = InkTrail(strokes: current, highlights: boxes) else { return nil }
+        trail.trailColor = colors.trail
+        trail.highlightColor = colors.highlight
+        return trail.image(at: t, size: size)
     }
 }

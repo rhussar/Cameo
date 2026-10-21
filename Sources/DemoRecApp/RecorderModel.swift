@@ -217,6 +217,20 @@ final class RecorderModel {
     var highlightShortcutTaken = false
     /// Highlighting needs Accessibility access to see what's under the pointer, whatever the shortcut.
     var highlightShortcutNeedsAccess = false
+    /// Colours of the trail and the highlight box, in the video and the previews.
+    var trailColor: RGB {
+        didSet { saveInkColors() }
+    }
+    var highlightColor: RGB {
+        didSet { saveInkColors() }
+    }
+    private func saveInkColors() {
+        let d = UserDefaults.standard
+        if let data = try? JSONEncoder().encode(trailColor) { d.set(data, forKey: "trailColor") }
+        if let data = try? JSONEncoder().encode(highlightColor) { d.set(data, forKey: "highlightColor") }
+        screenPreview.liveInk.setColors(trail: trailColor, highlight: highlightColor)
+        LivePreview.shared.setInkColors(trail: trailColor, highlight: highlightColor)
+    }
     /// Which shortcut is waiting for you to press a new one, if any.
     var capturingShortcut: ShortcutSlot?
     enum ShortcutSlot { case zoom, trail, highlight }
@@ -384,6 +398,8 @@ final class RecorderModel {
         tilt = d.object(forKey: "tilt") as? Double ?? Stage().tilt
         zoomShortcut = d.data(forKey: "zoomShortcut").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .defaultZoom
         trailShortcut = d.data(forKey: "trailShortcut").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .defaultTrail
+        trailColor = d.data(forKey: "trailColor").flatMap { try? JSONDecoder().decode(RGB.self, from: $0) } ?? .green
+        highlightColor = d.data(forKey: "highlightColor").flatMap { try? JSONDecoder().decode(RGB.self, from: $0) } ?? .green
         highlightShortcut = d.data(forKey: "highlightShortcut").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .defaultHighlight
         cameraID = d.string(forKey: "cameraID")
         microphoneID = d.string(forKey: "microphoneID")
@@ -393,6 +409,7 @@ final class RecorderModel {
         }
         look = d.data(forKey: "look").flatMap { try? JSONDecoder().decode(Look.self, from: $0) } ?? Look()
         preview.setMirror(mirror)
+        screenPreview.liveInk.setColors(trail: trailColor, highlight: highlightColor)
         preview.setLook(look)
         preview.setMasking(presenter.needsMask)
         updateScreenPreviewLayout()
@@ -860,6 +877,8 @@ final class RecorderModel {
         layout.position = position
         layout.background = background
         layout.presenter = presenter
+        layout.trailColor = trailColor
+        layout.highlightColor = highlightColor
         return layout
     }
 
