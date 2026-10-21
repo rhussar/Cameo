@@ -989,8 +989,18 @@ private struct CropControls: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(model.cropRatio == nil ? "Any shape: the video takes the box's shape" : "Shaped to fill your \(model.format.name) video")
-                .font(.callout).foregroundStyle(.white.opacity(0.85))
+            if model.videoCropRatio == nil {
+                Text("Any shape: the video takes the box's shape")
+                    .font(.callout).foregroundStyle(.white.opacity(0.85))
+            } else {
+                Toggle(isOn: $model.cropFillsVideo) {
+                    Label("Fill the \(model.format.name) video", systemImage: model.cropFillsVideo ? "lock" : "lock.open")
+                }
+                .toggleStyle(.button)
+                .help(model.cropFillsVideo
+                      ? "The box keeps the video's shape and fills it edge to edge"
+                      : "Any shape: what's in the box sits inside the video, over the background")
+            }
             Button("Whole Screen", action: model.clearCrop)
             Button("Done") { model.cropping = false }
                 .buttonStyle(.borderedProminent)

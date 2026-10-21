@@ -282,9 +282,19 @@ final class RecorderModel {
         crop = nil
         cropping = false
     }
+    /// Keep the crop box shaped like the video, so it fills the frame edge to edge. Off, the box takes any shape
+    /// (say, just one window) and is fitted inside the video over the background.
+    var cropFillsVideo: Bool {
+        didSet {
+            UserDefaults.standard.set(cropFillsVideo, forKey: "cropFillsVideo")
+            if let crop, let k = cropRatio { self.crop = Self.reshaped(crop, ratio: k) }
+        }
+    }
     /// Width / height of the crop box in fractions of the screen so the crop exactly fills the video's frame.
-    /// nil (any shape) when the video takes its shape from the crop.
-    var cropRatio: CGFloat? {
+    /// nil (any shape) when the box isn't held to the video's shape, or the video takes its shape from the crop.
+    var cropRatio: CGFloat? { cropFillsVideo ? videoCropRatio : nil }
+    /// What `cropRatio` would be with the box held to the video's shape.
+    var videoCropRatio: CGFloat? {
         guard let out = format.size, let src = selectedSource?.size, src.width > 0, src.height > 0 else { return nil }
         return (out.width / out.height) / (src.width / src.height)
     }
@@ -412,6 +422,7 @@ final class RecorderModel {
         cameraID = d.string(forKey: "cameraID")
         microphoneID = d.string(forKey: "microphoneID")
         format = d.string(forKey: "format").flatMap(OutputFormat.init(rawValue:)) ?? .original
+        cropFillsVideo = d.bool(forKey: "cropFillsVideo")
         crops = (d.dictionary(forKey: "crops") as? [String: [Double]] ?? [:]).compactMapValues { v in
             v.count == 4 ? CGRect(x: v[0], y: v[1], width: v[2], height: v[3]) : nil
         }
