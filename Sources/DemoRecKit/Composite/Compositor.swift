@@ -11,8 +11,13 @@ public final class Compositor {
     private var backgroundCache: (size: CGSize, image: CIImage)?
     private lazy var backgroundContext = CIContext(options: [.cacheIntermediates: false])
 
-    public init(layout: Layout) {
+    /// `reusing` an earlier compositor keeps its drawn background when the background hasn't changed, so moving
+    /// or tilting the card (which makes a new compositor each step) doesn't redraw it every time.
+    public init(layout: Layout, reusing previous: Compositor? = nil) {
         self.layout = layout
+        if let previous, previous.layout.background == layout.background {
+            backgroundCache = previous.backgroundLock.withLock { previous.backgroundCache }
+        }
     }
 
     public func cutout(camera: CIImage, mask: CIImage?) -> CIImage {

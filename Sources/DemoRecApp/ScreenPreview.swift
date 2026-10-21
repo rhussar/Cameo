@@ -46,17 +46,38 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
 
     /// Styles and frames the preview like the final video. Re-renders the last frame, since a still screen sends no new ones.
     /// `zoom` false shows the screen unzoomed whatever the pointer does (e.g. while editing the crop).
+    /// A burst of changes (dragging a slider) draws only the latest: one redraw waits at a time, and it takes whatever
+    /// layout is newest when it runs.
     func setLayout(stage: Stage?, background: Background, canvas: CGSize?, crop: CGRect?, zoom: Bool) {
+        let waiting = pendingLock.withLock {
+            defer { pendingLayout = PendingLayout(stage: stage, background: background, canvas: canvas, crop: crop, zoom: zoom) }
+            return pendingLayout != nil
+        }
+        guard !waiting else { return }
         queue.async {
-            self.stage = stage
-            self.background = background
-            self.canvas = canvas
-            self.crop = crop
-            self.zoomEnabled = zoom
-            if !zoom { self.zoom = .none }
+            guard let next = self.pendingLock.withLock({ () -> PendingLayout? in
+                defer { self.pendingLayout = nil }
+                return self.pendingLayout
+            }) else { return }
+            self.stage = next.stage
+            self.background = next.background
+            self.canvas = next.canvas
+            self.crop = next.crop
+            self.zoomEnabled = next.zoom
+            if !next.zoom { self.zoom = .none }
             if let frame = self.lastFrame { self.render(frame) }
         }
     }
+
+    private struct PendingLayout {
+        var stage: Stage?
+        var background: Background
+        var canvas: CGSize?
+        var crop: CGRect?
+        var zoom: Bool
+    }
+    private let pendingLock = NSLock()
+    private var pendingLayout: PendingLayout? // pendingLock
 
     @MainActor
     func start(target: CaptureTarget?) async throws {
@@ -167,7 +188,7 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
             }
             // Compared by value: a new compositor redraws the background, which must happen only when it changes.
             if compositor == nil || layout != compositorLayout {
-                compositor = Compositor(layout: layout)
+                compositor = Compositor(layout: layout, reusing: compositor)
                 compositorLayout = layout
             }
             out = compositor!.compose(screen: frame, cutout: nil, zoom: zoom, ink: ink)
