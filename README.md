@@ -11,8 +11,8 @@ AVFoundation, Vision, CoreImage). No models to download, no cloud.
 scripts/build-app.sh
 ```
 
-This installs `~/Applications/Cameo.app` (the app was called DemoRec before; the CLI is still `demorec`). Open it, click a corner of the preview to choose
-where you appear, drag the slider to set your size, and hit **Start Recording**. After a
+This installs `~/Applications/Cameo.app` (the app was called DemoRec before; the CLI is still `demorec`). Open it, drag yourself in the preview to wherever you
+want to appear (you line up flush with an edge or the middle when you get within a few points of it), drag the slider to set your size, and hit **Start Recording**. After a
 3-second countdown the window shrinks to a small floating pill (hidden from the recording).
 Click **Stop** and the app makes the video, then offers **Play** and **Show in Finder**.
 Videos go side by side in `~/Movies/DemoRec/`, named like macOS's own screen recordings
@@ -35,7 +35,8 @@ Aurora, Ember, Silk, Slate), a **Colour** of your own with a texture slider from
 of your own (**Picture…**, with a soften toggle); and **You** as a cutout or a **glass tile** (portrait, square or landscape) that shows the
 whole camera picture in a rounded frosted frame with a bright rim and a soft shadow. A glass tile skips
 person segmentation, so it's also the lightest on the Mac. The background only shows where the screen
-doesn't fill the frame, so picking one for a flat screen puts the screen on a card. The CLI has the same
+doesn't fill the frame, so picking one for a flat screen puts the screen on a card. With a card or tilted
+screen, the **screen position** slider slides it left or right (a little smaller) to leave room for you beside it. The CLI has the same
 as `--scene`, `--background`, `--presenter`, `--tile` and `--card`.
 
 **Crop** (the crop button next to the screen picker) shows only part of what you record, handy on a big

@@ -237,6 +237,13 @@ final class RecorderModel {
     /// Why the last key pressed while capturing wasn't taken.
     var shortcutHint: String?
     private var shortcutMonitor: Any?
+    /// Slides the screen card left (-1) or right (1) to leave room for you beside it. Card and tilted only.
+    var screenShift: Double {
+        didSet {
+            UserDefaults.standard.set(screenShift, forKey: "screenShift")
+            updateScreenPreviewLayout()
+        }
+    }
     /// Card tilt in degrees when styled; positive brings the left edge closer.
     var tilt: Double {
         didSet {
@@ -312,7 +319,7 @@ final class RecorderModel {
         }
     }
 
-    var stage: Stage? { screenStyle.stage(tilt: tilt) }
+    var stage: Stage? { screenStyle.stage(tilt: tilt, shift: screenShift) }
 
     /// Recording, or making the video: quitting or closing now would lose it.
     var isBusy: Bool {
@@ -396,6 +403,7 @@ final class RecorderModel {
             ?? Background.defaultColor
         presenter = d.data(forKey: "presenter").flatMap { try? JSONDecoder().decode(Presenter.self, from: $0) } ?? Presenter()
         tilt = d.object(forKey: "tilt") as? Double ?? Stage().tilt
+        screenShift = d.double(forKey: "screenShift")
         zoomShortcut = d.data(forKey: "zoomShortcut").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .defaultZoom
         trailShortcut = d.data(forKey: "trailShortcut").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .defaultTrail
         trailColor = d.data(forKey: "trailColor").flatMap { try? JSONDecoder().decode(RGB.self, from: $0) } ?? .green

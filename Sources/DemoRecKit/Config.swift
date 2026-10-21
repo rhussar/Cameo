@@ -213,6 +213,9 @@ public struct Stage: Sendable, Codable, Equatable {
     public var shadowBlur: Double = 0.03
     /// Drop shadow vertical offset as a fraction of the frame height.
     public var shadowOffset: Double = 0.02
+    /// Slides the card towards a side, -1 (left) to 1 (right), shrinking it a little to leave room beside it.
+    /// nil (as in older layouts) = where `cardX` puts it.
+    public var shift: Double?
 
     public init() {}
 
@@ -251,15 +254,17 @@ public enum ScreenStyle: String, CaseIterable, Sendable, Codable {
     }
 
     /// The stage for this style; nil for flat.
-    public func stage(tilt: Double) -> Stage? {
+    public func stage(tilt: Double, shift: Double = 0) -> Stage? {
+        var s: Stage
         switch self {
         case .flat: return nil
-        case .card: return .card
+        case .card: s = .card
         case .tilted:
-            var s = Stage.tilted
+            s = .tilted
             s.tilt = tilt
-            return s
         }
+        s.shift = shift == 0 ? nil : shift
+        return s
     }
 }
 

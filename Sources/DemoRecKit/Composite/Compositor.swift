@@ -258,10 +258,13 @@ public final class Compositor {
         let backdrop = self.backdrop(screen: screen, frame: frame, zoom: CGFloat(stage.backgroundZoom),
                                      blur: CGFloat(stage.backgroundBlur), dim: CGFloat(stage.backgroundDim))
 
-        // Card geometry: the screen fitted in the frame, then inset.
+        // Card geometry: the screen fitted in the frame, then inset. Shifted to a side, it shrinks a little so
+        // there's room beside it.
+        let shift = CGFloat(min(max(stage.shift ?? 0, -1), 1))
+        let inset = CGFloat(stage.inset) * (1 - 0.18 * abs(shift))
         let fit = min(W / screen.extent.width, H / screen.extent.height)
-        let cardH = CGFloat(stage.inset) * fit * screen.extent.height
-        let cardW = CGFloat(stage.inset) * fit * screen.extent.width
+        let cardH = inset * fit * screen.extent.height
+        let cardW = inset * fit * screen.extent.width
         let cardRect = CGRect(x: 0, y: 0, width: cardW, height: cardH)
         let radius = CGFloat(stage.cornerRadius) * H
         let rr = CIFilter.roundedRectangleGenerator()
@@ -271,7 +274,9 @@ public final class Compositor {
         let roundedMask = rr.outputImage?.cropped(to: cardRect)
 
         // Perspective: rotate about the vertical axis through the card centre and project.
-        let cx = CGFloat(stage.cardX) * W
+        // As far as it can go while keeping a small gap to the frame's edge.
+        let room = max((W - cardW) / 2 - 0.04 * H, 0)
+        let cx = CGFloat(stage.cardX) * W + shift * room
         let cy = CGFloat(stage.cardY) * H
         let theta = CGFloat(stage.tilt) * .pi / 180
         let focal = 2.5 * W
