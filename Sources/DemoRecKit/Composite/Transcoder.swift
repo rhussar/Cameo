@@ -184,6 +184,7 @@ public final class Transcoder {
             let zoomedFrames = zoomPath.filter { $0.scale > 1.01 }.count
             print(String(format: "zoom: %d moments, zoomed in for %.1f s", moments, Double(zoomedFrames) / Double(fps)))
         }
+        let inkTrail = cursor.flatMap(InkTrail.init(track:))
         let black = CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: recordedSize))
         let started = Date()
         var frameIndex = 0
@@ -197,7 +198,8 @@ public final class Transcoder {
             let cutout = try cutouts.advance(to: start + t)
 
             let screen = screenSrc.current.map { CIImage(cvPixelBuffer: $0) } ?? black
-            var frame = compositor.compose(screen: screen, cutout: cutout, zoom: zoomPath?[i] ?? .none)
+            let ink = inkTrail?.image(at: (start + t).seconds, size: screenSize)
+            var frame = compositor.compose(screen: screen, cutout: cutout, zoom: zoomPath?[i] ?? .none, ink: ink)
             if outputScale != 1 {
                 frame = frame.transformed(by: CGAffineTransform(scaleX: outputScale, y: outputScale))
             }

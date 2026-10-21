@@ -64,13 +64,15 @@ public final class Compositor {
 
     /// Builds the frame: the screen (cropped, then flat, or staged as a card over a blurred backdrop) with the cutout in its corner.
     /// With a canvas of a different shape, the screen is fitted inside it over a blurred copy of itself.
-    /// `zoom` zooms the screen only; you stay the same size.
-    public func compose(screen: CIImage, cutout: CIImage?, zoom: ZoomState = .none) -> CIImage {
+    /// `zoom` zooms the screen only; you stay the same size. `ink` (in the cropped screen's pixels) is drawn on the
+    /// screen before it's zoomed, so it zooms along with what it points at.
+    public func compose(screen: CIImage, cutout: CIImage?, zoom: ZoomState = .none, ink: CIImage? = nil) -> CIImage {
         var screen = screen.transformed(by: CGAffineTransform(translationX: -screen.extent.minX, y: -screen.extent.minY))
         if layout.crop != nil {
             let r = layout.cropRect(in: screen.extent.size)
             screen = screen.cropped(to: r).transformed(by: CGAffineTransform(translationX: -r.minX, y: -r.minY))
         }
+        if let ink { screen = ink.composited(over: screen).cropped(to: screen.extent) }
         screen = zoomed(screen, zoom)
         let frame = CGRect(origin: .zero, size: layout.canvas ?? screen.extent.size)
         let base: CIImage

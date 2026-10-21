@@ -197,8 +197,19 @@ final class RecorderModel {
     }
     /// Another app already uses the zoom shortcut, so it does nothing here.
     var zoomShortcutTaken = false
-    /// Waiting for you to press a new zoom shortcut.
-    var capturingShortcut = false
+    /// Hold to draw a green trail behind the pointer in the video; it fades a moment after you draw it.
+    var trailShortcut: Shortcut {
+        didSet {
+            if let data = try? JSONEncoder().encode(trailShortcut) { UserDefaults.standard.set(data, forKey: "trailShortcut") }
+            registerTrailHotKey()
+        }
+    }
+    var trailShortcutTaken = false
+    /// A mouse-button trail shortcut is set but Cameo doesn't have Accessibility access yet.
+    var trailShortcutNeedsAccess = false
+    /// Which shortcut is waiting for you to press a new one, if any.
+    var capturingShortcut: ShortcutSlot?
+    enum ShortcutSlot { case zoom, trail }
     /// Why the last key pressed while capturing wasn't taken.
     var shortcutHint: String?
     private var shortcutMonitor: Any?
@@ -334,6 +345,7 @@ final class RecorderModel {
     private var camera: CameraRecorder?
     private var cursor: CursorRecorder?
     private var zoomHotKey: HotKey?
+    private var trailHotKey: HotKey?
     /// Watches the pointer during setup so the preview zooms like the video will.
     private var previewCursor: CursorRecorder?
     /// Working folder for the recording in progress (see Session.workBase).
@@ -360,6 +372,7 @@ final class RecorderModel {
         presenter = d.data(forKey: "presenter").flatMap { try? JSONDecoder().decode(Presenter.self, from: $0) } ?? Presenter()
         tilt = d.object(forKey: "tilt") as? Double ?? Stage().tilt
         zoomShortcut = d.data(forKey: "zoomShortcut").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .defaultZoom
+        trailShortcut = d.data(forKey: "trailShortcut").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .defaultTrail
         cameraID = d.string(forKey: "cameraID")
         microphoneID = d.string(forKey: "microphoneID")
         format = d.string(forKey: "format").flatMap(OutputFormat.init(rawValue:)) ?? .original
@@ -448,7 +461,8 @@ final class RecorderModel {
             previewsPaused = false
             startScreenPreview()
         }
-        if zoomHotKey == nil, !capturingShortcut { registerZoomHotKey() }
+        if zoomHotKey == nil, capturingShortcut != .zoom { registerZoomHotKey() }
+        if trailHotKey == nil, capturingShortcut != .trail { registerTrailHotKey() }
         Task {
             if await AVCaptureDevice.requestAccess(for: .video) {
                 cameraDenied = false
@@ -577,14 +591,32 @@ final class RecorderModel {
         }
         zoomShortcutTaken = zoomHotKey == nil && zoomShortcut.mouseButton == nil
         zoomShortcutNeedsAccess = zoomHotKey == nil && zoomShortcut.mouseButton != nil
-        if zoomShortcutNeedsAccess, accessObserver == nil {
-            // You grant access in System Settings; try again each time you come back to DemoRec.
-            accessObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
-                                                                    object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self, self.zoomShortcutNeedsAccess, !self.capturingShortcut else { return }
-                    self.registerZoomHotKey()
-                }
+        if zoomShortcutNeedsAccess { watchForAccess() }
+    }
+
+    /// While recording, holding the trail shortcut draws a trail behind the pointer.
+    private func registerTrailHotKey() {
+        trailHotKey?.unregister()
+        trailHotKey = HotKey(trailShortcut, action: { [weak self] in
+            guard let self, case .recording = phase else { return }
+            cursor?.setInking(true)
+        }, release: { [weak self] in
+            self?.cursor?.setInking(false)
+        })
+        trailShortcutTaken = trailHotKey == nil && trailShortcut.mouseButton == nil
+        trailShortcutNeedsAccess = trailHotKey == nil && trailShortcut.mouseButton != nil
+        if trailShortcutNeedsAccess { watchForAccess() }
+    }
+
+    /// You grant access in System Settings; try again each time you come back to Cameo.
+    private func watchForAccess() {
+        guard accessObserver == nil else { return }
+        accessObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                                                object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if self.zoomShortcutNeedsAccess, self.capturingShortcut != .zoom { self.registerZoomHotKey() }
+                if self.trailShortcutNeedsAccess, self.capturingShortcut != .trail { self.registerTrailHotKey() }
             }
         }
     }
@@ -601,16 +633,22 @@ final class RecorderModel {
             NSWorkspace.shared.open(url)
         }
         registerZoomHotKey()
+        registerTrailHotKey()
     }
 
-    /// Click the shortcut button, then press the new shortcut. Esc or a second click cancels.
-    func toggleCapturingShortcut() {
-        if capturingShortcut { finishCapturing(nil); return }
-        capturingShortcut = true
+    /// Click a shortcut button, then press the new shortcut. Esc or a second click cancels.
+    func toggleCapturingShortcut(_ slot: ShortcutSlot = .zoom) {
+        if let current = capturingShortcut {
+            finishCapturing(nil)
+            if current == slot { return }
+        }
+        capturingShortcut = slot
         shortcutHint = nil
-        // Off while capturing, or pressing the current shortcut would zoom instead of being captured.
-        zoomHotKey?.unregister()
-        zoomHotKey = nil
+        // Off while capturing, or pressing the current shortcut would act instead of being captured.
+        switch slot {
+        case .zoom: zoomHotKey?.unregister(); zoomHotKey = nil
+        case .trail: trailHotKey?.unregister(); trailHotKey = nil
+        }
         shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .otherMouseDown]) { [weak self] event in
             guard let self else { return event }
             if event.type == .otherMouseDown {
@@ -629,14 +667,17 @@ final class RecorderModel {
     private func finishCapturing(_ shortcut: Shortcut?) {
         if let shortcutMonitor { NSEvent.removeMonitor(shortcutMonitor) }
         shortcutMonitor = nil
-        capturingShortcut = false
+        let slot = capturingShortcut
+        capturingShortcut = nil
         shortcutHint = nil
-        if let shortcut {
-            // A mouse button needs Accessibility access; ask now, while you're looking at the app.
-            if shortcut.mouseButton != nil { _ = HotKey.mouseAccess(prompt: true) }
-            zoomShortcut = shortcut // registers it
-        } else {
-            registerZoomHotKey()
+        // A mouse button needs Accessibility access; ask now, while you're looking at the app.
+        if shortcut?.mouseButton != nil { _ = HotKey.mouseAccess(prompt: true) }
+        switch (slot, shortcut) {
+        case (.zoom, let s?): zoomShortcut = s // registers it
+        case (.trail, let s?): trailShortcut = s
+        case (.zoom, nil): registerZoomHotKey()
+        case (.trail, nil): registerTrailHotKey()
+        case (nil, _): break
         }
     }
 
@@ -656,7 +697,7 @@ final class RecorderModel {
 
     func record() {
         cropping = false
-        if capturingShortcut { finishCapturing(nil) }
+        if capturingShortcut != nil { finishCapturing(nil) }
         task = Task { await startRecording() }
     }
 

@@ -138,7 +138,8 @@ private struct BottomBar: View {
             if model.screenStyle == .tilted {
                 TiltSlider(tilt: $model.tilt, width: wide ? 130 : 90)
             }
-            ZoomKeyButton(model: model)
+            ShortcutButton(model: model, slot: .zoom)
+            ShortcutButton(model: model, slot: .trail)
         }
     }
 
@@ -194,42 +195,55 @@ private struct RecordingsMenu: View {
     }
 }
 
-/// The zoom shortcut: shows it, and click to set a new one.
-private struct ZoomKeyButton: View {
+/// A shortcut (zoom, or the trail you draw while holding it): shows it, and click to set a new one.
+private struct ShortcutButton: View {
     @Bindable var model: RecorderModel
+    let slot: RecorderModel.ShortcutSlot
 
     var body: some View {
-        Button(action: model.toggleCapturingShortcut) {
-            if model.capturingShortcut {
+        Button { model.toggleCapturingShortcut(slot) } label: {
+            if capturing {
                 Label(model.shortcutHint ?? "Press a shortcut…", systemImage: "keyboard")
             } else {
-                Label("Zoom  \(model.zoomShortcut.label)", systemImage: problem ? "exclamationmark.triangle" : icon)
+                Label("\(name)  \(shortcut.label)", systemImage: problem ? "exclamationmark.triangle" : icon)
             }
         }
-        .tint(model.capturingShortcut ? .accentColor : nil)
+        .tint(capturing ? .accentColor : nil)
         .buttonStyle(.bordered)
         .fixedSize()
         .help(help)
-        if model.zoomShortcutNeedsAccess, !model.capturingShortcut {
+        if needsAccess, !capturing {
             Button("Allow Mouse", action: model.requestMouseAccess)
                 .buttonStyle(.borderedProminent)
                 .help("Cameo needs Accessibility access to use a mouse button as a shortcut")
         }
     }
 
-    private var problem: Bool { model.zoomShortcutTaken || model.zoomShortcutNeedsAccess }
-    private var icon: String { model.zoomShortcut.mouseButton == nil ? "plus.magnifyingglass" : "computermouse" }
+    private var capturing: Bool { model.capturingShortcut == slot }
+    private var name: String { slot == .zoom ? "Zoom" : "Trail" }
+    private var shortcut: Shortcut { slot == .zoom ? model.zoomShortcut : model.trailShortcut }
+    private var taken: Bool { slot == .zoom ? model.zoomShortcutTaken : model.trailShortcutTaken }
+    private var needsAccess: Bool { slot == .zoom ? model.zoomShortcutNeedsAccess : model.trailShortcutNeedsAccess }
+    private var problem: Bool { taken || needsAccess }
+    private var icon: String {
+        if shortcut.mouseButton != nil { return "computermouse" }
+        return slot == .zoom ? "plus.magnifyingglass" : "scribble"
+    }
 
     private var help: String {
-        if model.capturingShortcut {
-            return "Press the shortcut you want for zooming: a key combo, or a mouse button with the pointer over Cameo "
-                + "(middle, back, forward or a side button). Esc cancels."
+        if capturing {
+            return "Press the shortcut you want for \(slot == .zoom ? "zooming" : "the trail"): a key combo, or a mouse button "
+                + "with the pointer over Cameo (middle, back, forward or a side button). Esc cancels."
         }
-        if model.zoomShortcutNeedsAccess {
-            return "To use \(model.zoomShortcut.label), allow Cameo under Privacy & Security > Accessibility."
+        if needsAccess {
+            return "To use \(shortcut.label), allow Cameo under Privacy & Security > Accessibility."
         }
-        if model.zoomShortcutTaken { return "Another app already uses \(model.zoomShortcut.label). Click to choose a different shortcut." }
-        return "Press \(model.zoomShortcut.label) to zoom in on the pointer and follow it; press it again to zoom out. "
+        if taken { return "\(shortcut.label) is already in use. Click to choose a different shortcut." }
+        if slot == .trail {
+            return "While recording, hold \(shortcut.label) and move the pointer to draw a green trail that fades after a moment. "
+                + "Click to change the shortcut."
+        }
+        return "Press \(shortcut.label) to zoom in on the pointer and follow it; press it again to zoom out. "
             + "Try it on the preview. Click to change the shortcut."
     }
 }

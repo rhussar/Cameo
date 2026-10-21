@@ -17,7 +17,7 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     private var stage: Stage? // queue only
     private var background: Background = .screen // queue only
     private var compositor: Compositor? // queue only; reused so a static background is drawn once
-    private var compositorKey = "" // queue only
+    private var compositorLayout: Layout? // queue only; what `compositor` was made for
     private var canvas: CGSize? // queue only
     private var crop: CGRect? // queue only
     private var lastFrame: CIImage? // queue only
@@ -133,10 +133,10 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
                 let s = min(1, 1600 / max(canvas.width, canvas.height))
                 layout.canvas = CGSize(width: (canvas.width * s).rounded(), height: (canvas.height * s).rounded())
             }
-            let key = (try? JSONEncoder().encode(layout)).map { String(decoding: $0, as: UTF8.self) } ?? ""
-            if compositor == nil || key != compositorKey {
+            // Compared by value: a new compositor redraws the background, which must happen only when it changes.
+            if compositor == nil || layout != compositorLayout {
                 compositor = Compositor(layout: layout)
-                compositorKey = key
+                compositorLayout = layout
             }
             let styled = compositor!.compose(screen: frame, cutout: nil, zoom: zoom)
             cg = ciContext.createCGImage(styled, from: styled.extent)

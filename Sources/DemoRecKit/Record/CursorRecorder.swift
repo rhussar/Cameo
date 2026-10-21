@@ -18,6 +18,9 @@ public struct CursorTrack: Codable, Sendable {
     /// When you pressed the zoom shortcut again to zoom back out. nil in recordings from before the shortcut
     /// toggled; their marks zoom out on their own after a few seconds.
     public var zoomOuts: [Double]?
+    /// The pointer's path while you held the trail shortcut, one stroke per hold. Drawn as a green trail that fades.
+    /// nil in recordings from before the trail shortcut.
+    public var ink: [[Point]]?
 
     public init() {}
 
@@ -43,6 +46,7 @@ public struct CursorTrack: Codable, Sendable {
         out.clicks = clicks.map(map).filter(inside)
         out.marks = marks.map(map).filter(inside)
         out.zoomOuts = zoomOuts
+        out.ink = ink?.map { $0.map(map) }
         return out
     }
 }
@@ -59,6 +63,7 @@ public final class CursorRecorder: @unchecked Sendable {
     private var tick = 0
     private var buttonsDown = false
     private var zoomedIn = false // queue only
+    private var inking = false // queue only
     private let lock = NSLock()
     private let keepsTrack: Bool
 
@@ -80,6 +85,7 @@ public final class CursorRecorder: @unchecked Sendable {
         self.target = target
         self.keepsTrack = keepsTrack
         track.zoomOuts = []
+        track.ink = []
     }
 
     public func start() {
@@ -112,6 +118,18 @@ public final class CursorRecorder: @unchecked Sendable {
         }
     }
 
+    /// The trail shortcut went down (true) or up (false): while it's held, the pointer's path is kept as a stroke.
+    public func setInking(_ on: Bool) {
+        queue.async { [self] in
+            guard on != inking else { return }
+            inking = on
+            guard on, keepsTrack else { return }
+            lock.lock()
+            track.ink?.append(point().map { [$0] } ?? [])
+            lock.unlock()
+        }
+    }
+
     /// Stops polling and returns what was recorded.
     public func stop() -> CursorTrack {
         queue.sync {
@@ -136,6 +154,8 @@ public final class CursorRecorder: @unchecked Sendable {
         if keepsTrack {
             lock.lock()
             if sample { track.samples.append(p) }
+            // Every poll while inking, so quick strokes stay smooth.
+            if inking, let i = track.ink?.indices.last { track.ink?[i].append(p) }
             if click { track.clicks.append(p) }
             lock.unlock()
         }

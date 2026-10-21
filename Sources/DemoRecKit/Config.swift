@@ -12,7 +12,7 @@ public enum MaskQuality: String, CaseIterable, Sendable {
 }
 
 /// How the presenter cutout is placed over the screen recording.
-public struct Layout: Sendable, Codable {
+public struct Layout: Sendable, Codable, Equatable {
     public var corner: Corner = .bottomRight
     /// Cutout height as a fraction of the screen height.
     public var scale: Double = 0.35
@@ -172,7 +172,7 @@ extension Layout {
 
 /// Presentation styling: the screen becomes a rounded, slightly tilted card with a drop shadow,
 /// floating over a zoomed and blurred copy of itself. Fractions are relative to the output frame height.
-public struct Stage: Sendable, Codable {
+public struct Stage: Sendable, Codable, Equatable {
     /// Card height as a fraction of the frame height.
     public var inset: Double = 0.88
     /// Horizontal position of the card centre, 0 = left edge, 1 = right edge.

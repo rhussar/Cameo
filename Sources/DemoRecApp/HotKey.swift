@@ -24,6 +24,7 @@ struct Shortcut: Codable, Equatable {
     }
 
     static let defaultZoom = Shortcut(keyCode: UInt32(kVK_ANSI_Z), modifiers: UInt32(controlKey | optionKey), label: "⌃⌥Z")
+    static let defaultTrail = Shortcut(keyCode: UInt32(kVK_ANSI_D), modifiers: UInt32(controlKey | optionKey), label: "⌃⌥D")
 
     /// The shortcut a key press makes. Nil for a plain key without ⌘, ⌃ or ⌥ (it would take over typing that key
     /// everywhere), except the F-keys, which are fine on their own.
@@ -62,15 +63,19 @@ struct Shortcut: Codable, Equatable {
 
 /// A system-wide shortcut. Keys use Carbon hot keys, which need no permission, and the key press goes only to us,
 /// not to the app you're demoing. Mouse buttons use an event tap, which needs Accessibility access, and swallow
-/// the click so (say) Back doesn't also take your browser back mid-demo.
+/// the click so (say) Back doesn't also take your browser back mid-demo. With `release`, it also tells you when the
+/// key or button comes back up, for shortcuts you hold.
 @MainActor
 final class HotKey {
+    private static var nextID: UInt32 = 1
+    private let id: UInt32
     private var ref: EventHotKeyRef?
     private var handler: EventHandlerRef?
     private var tap: CFMachPort?
     private var tapSource: CFRunLoopSource?
     private var button: Int64 = -1
     private let action: () -> Void
+    private let release: (() -> Void)?
 
     /// Whether DemoRec may watch mouse buttons system-wide. `prompt` shows the macOS request (once per app version).
     static func mouseAccess(prompt: Bool) -> Bool {
@@ -79,22 +84,32 @@ final class HotKey {
     }
 
     /// Nil if another app already owns the key shortcut, or, for a mouse button, without Accessibility access.
-    init?(_ shortcut: Shortcut, action: @escaping () -> Void) {
+    init?(_ shortcut: Shortcut, action: @escaping () -> Void, release: (() -> Void)? = nil) {
         self.action = action
+        self.release = release
+        id = Self.nextID
+        Self.nextID += 1
         if let mouseButton = shortcut.mouseButton {
             guard installTap(button: mouseButton) else { return nil }
             return
         }
-        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        var specs = [EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+                     EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))]
         let me = Unmanaged.passUnretained(self).toOpaque()
-        InstallEventHandler(GetApplicationEventTarget(), { _, _, userData in
-            guard let userData else { return OSStatus(eventNotHandledErr) }
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, userData in
+            guard let userData, let event else { return OSStatus(eventNotHandledErr) }
             let hotKey = Unmanaged<HotKey>.fromOpaque(userData).takeUnretainedValue()
-            MainActor.assumeIsolated { hotKey.action() }
+            // Every hot key's handler sees every hot key; only take ours.
+            var pressed = EventHotKeyID()
+            GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil,
+                              MemoryLayout<EventHotKeyID>.size, nil, &pressed)
+            guard pressed.id == hotKey.id else { return OSStatus(eventNotHandledErr) }
+            let down = GetEventKind(event) == UInt32(kEventHotKeyPressed)
+            MainActor.assumeIsolated { down ? hotKey.action() : hotKey.release?() }
             return noErr
-        }, 1, &spec, me, &handler)
-        let id = EventHotKeyID(signature: OSType(0x444D_525A), id: 1) // "DMRZ"
-        guard RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, id, GetApplicationEventTarget(), 0, &ref) == noErr else {
+        }, specs.count, &specs, me, &handler)
+        let hotKeyID = EventHotKeyID(signature: OSType(0x444D_525A), id: id) // "DMRZ"
+        guard RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, hotKeyID, GetApplicationEventTarget(), 0, &ref) == noErr else {
             if let handler { RemoveEventHandler(handler) }
             return nil
         }
@@ -125,7 +140,7 @@ final class HotKey {
             return Unmanaged.passUnretained(event)
         }
         guard event.getIntegerValueField(.mouseEventButtonNumber) == button else { return Unmanaged.passUnretained(event) }
-        if type == .otherMouseDown { action() }
+        if type == .otherMouseDown { action() } else { release?() }
         return nil // ours: swallow both press and release
     }
 
