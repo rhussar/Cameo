@@ -50,6 +50,11 @@ needs ⌘, ⌃ or ⌥, or can be an F-key on its own). Try it on the setup previ
 recording, the magnifier in the stop pill shows whether you're zoomed in. Only the screen zooms, not
 you. (The CLI can also zoom on its own on clicks and pauses; see `--zoom`.)
 
+**Trail** lets you point things out: while recording, hold **⌃⌥D** and move the pointer, and it leaves a
+green glowing trail that fades about a second and a half after you draw it. Click the **Trail ⌃⌥D** button
+to pick a different key (same rules as Zoom; an F-key or a spare mouse button is easiest to hold). The trail
+is drawn on the screen, so it zooms with it. It shows in the finished video, not in the previews.
+
 ## Build (CLI)
 
 ```bash
