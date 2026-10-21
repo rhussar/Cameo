@@ -7,13 +7,19 @@ import CoreImage.CIFilterBuiltins
 public struct InkTrail {
     private let strokes: [[CursorTrack.Point]]
     /// Seconds a bit of trail stays before it's gone.
-    public var fade: Double = 1.5
+    public var fade = InkTrail.defaultFade
+    public static let defaultFade = 1.5
 
     public static let color = CIColor(red: 0.2, green: 0.85, blue: 0.35)
 
     public init?(track: CursorTrack) {
-        guard let ink = track.ink?.filter({ $0.count > 0 }), !ink.isEmpty else { return nil }
-        strokes = ink
+        self.init(strokes: track.ink ?? [])
+    }
+
+    public init?(strokes: [[CursorTrack.Point]]) {
+        let ink = strokes.filter { !$0.isEmpty }
+        guard !ink.isEmpty else { return nil }
+        self.strokes = ink
     }
 
     /// The trail at time `t` (seconds on the cursor track's clock) over a screen of `size` pixels, or nil when
@@ -86,5 +92,48 @@ public struct InkTrail {
         let soft = mask.clampedToExtent().applyingGaussianBlur(sigma: glow).cropped(to: box)
         let halo = tinted(soft).applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0.7)])
         return tinted(mask).composited(over: halo)
+    }
+}
+
+/// The trail as it's being drawn, for live previews: strokes come in from the pointer watcher's queue and the
+/// preview draws them on its own. Strokes that have faded away are forgotten.
+public final class LiveInk: @unchecked Sendable {
+    private let lock = NSLock()
+    private var strokes: [[CursorTrack.Point]] = []
+    private var drawing = false
+    private let fade = InkTrail.defaultFade
+
+    public init() {}
+
+    public func begin(_ p: CursorTrack.Point) {
+        lock.withLock { drawing = true; strokes.append([p]) }
+    }
+
+    /// The pointer moved: part of the stroke if the trail shortcut is held, otherwise nothing.
+    public func add(_ p: CursorTrack.Point) {
+        lock.withLock { if drawing, !strokes.isEmpty { strokes[strokes.count - 1].append(p) } }
+    }
+
+    public func end() {
+        lock.withLock { drawing = false }
+    }
+
+    public func clear() {
+        lock.withLock { drawing = false; strokes = [] }
+    }
+
+    /// Whether there's anything on screen at `t`, so the preview knows to keep redrawing.
+    public func isVisible(at t: Double) -> Bool {
+        lock.withLock { drawing || strokes.contains { ($0.last?.t ?? -.infinity) > t - fade } }
+    }
+
+    public func image(at t: Double, size: CGSize) -> CIImage? {
+        let current = lock.withLock { () -> [[CursorTrack.Point]] in
+            let held = drawing ? strokes.popLast() : nil
+            strokes.removeAll { ($0.last?.t ?? -.infinity) <= t - fade }
+            if let held { strokes.append(held) }
+            return strokes
+        }
+        return InkTrail(strokes: current)?.image(at: t, size: size)
     }
 }

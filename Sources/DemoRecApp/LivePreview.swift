@@ -25,12 +25,16 @@ final class LivePreview {
     @ObservationIgnored private var person: CameraPreview?
     @ObservationIgnored private var recording = false
     @ObservationIgnored private let zoomLink = ZoomLink()
+    /// The trail being drawn, kept here rather than in the preview so a preview opened mid-stroke shows it too.
+    @ObservationIgnored private let ink = LiveInk()
 
     /// For the recording's CursorRecorder: forwards the pointer and the zoom shortcut to the preview's zoom, so the
-    /// preview zooms with the recording. Times move from recording time to the host clock the preview steps on,
+    /// preview zooms with the recording, and the trail to the preview's trail. Times move from recording time to the host clock the preview steps on,
     /// and points into the crop's coordinates, as in the setup preview.
     nonisolated func pointerHandler(startTime: CMTime, crop: CGRect?) -> (CursorRecorder.Event) -> Void {
         let link = zoomLink
+        let ink = ink
+        ink.clear()
         let offset = startTime.seconds
         let c = crop ?? CGRect(x: 0, y: 0, width: 1, height: 1)
         return { event in
@@ -44,7 +48,11 @@ final class LivePreview {
                 guard inside(q) else { return }
                 link.zoomedIn(q)
             case .zoomOut(let t): link.zoomedOut(t + offset)
-            case .move(let p): link.zoom?.moved(map(p))
+            case .move(let p):
+                ink.add(map(p))
+                link.zoom?.moved(map(p))
+            case .inkDown(let p): ink.begin(map(p))
+            case .inkUp: ink.end()
             case .click(let p):
                 let q = map(p)
                 if inside(q) { link.zoom?.clicked(q) }
@@ -87,7 +95,7 @@ final class LivePreview {
         camera?.onVideoFrame = { [person] in person.feed($0) }
         self.person = person
 
-        let screen = ScreenPreview()
+        let screen = ScreenPreview(liveInk: ink)
         screen.liveZoom.setSettings(RecorderModel.zoomSettings)
         zoomLink.attach(screen.liveZoom)
         screen.setLayout(stage: model.stage, background: model.background, canvas: model.format.size, crop: model.crop, zoom: true)

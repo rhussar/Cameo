@@ -74,6 +74,9 @@ public final class CursorRecorder: @unchecked Sendable {
         case zoomIn(CursorTrack.Point)
         /// The zoom shortcut again: zoom back out, at this time.
         case zoomOut(Double)
+        /// The trail shortcut went down here; the moves that follow, until `inkUp`, are the stroke.
+        case inkDown(CursorTrack.Point)
+        case inkUp
     }
     /// Called on the recorder's own queue as things happen. Set it before `start()`.
     public var onEvent: ((Event) -> Void)?
@@ -123,10 +126,14 @@ public final class CursorRecorder: @unchecked Sendable {
         queue.async { [self] in
             guard on != inking else { return }
             inking = on
-            guard on, keepsTrack else { return }
-            lock.lock()
-            track.ink?.append(point().map { [$0] } ?? [])
-            lock.unlock()
+            guard on else { onEvent?(.inkUp); return }
+            let p = point()
+            if keepsTrack {
+                lock.lock()
+                track.ink?.append(p.map { [$0] } ?? [])
+                lock.unlock()
+            }
+            if let p { onEvent?(.inkDown(p)) }
         }
     }
 

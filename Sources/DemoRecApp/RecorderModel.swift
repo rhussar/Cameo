@@ -538,6 +538,7 @@ final class RecorderModel {
     private func startPreviewCursor(target: CaptureTarget?) {
         _ = previewCursor?.stop()
         screenPreview.liveZoom.reset()
+        screenPreview.liveInk.clear()
         // Time zero, so points carry plain host-clock seconds like ScreenPreview.now().
         let watcher = CursorRecorder(startTime: .zero, target: target ?? currentDisplayID().map { .display($0) }, keepsTrack: false)
         watcher.onEvent = { [weak self] event in
@@ -552,6 +553,7 @@ final class RecorderModel {
     private func previewPointer(_ event: CursorRecorder.Event) {
         guard isSetup, !cropping else { return }
         let zoom = screenPreview.liveZoom
+        let ink = screenPreview.liveInk
         let c = crop ?? CGRect(x: 0, y: 0, width: 1, height: 1)
         func map(_ p: CursorTrack.Point) -> CursorTrack.Point {
             CursorTrack.Point(t: p.t, x: (p.x - c.minX) / c.width, y: (p.y - c.minY) / c.height)
@@ -561,8 +563,13 @@ final class RecorderModel {
         // The shortcut counts wherever the pointer is: it's what the recording would do.
         case .zoomIn(let p): if inside(map(p)) { zoom.zoomedIn(map(p)) }
         case .zoomOut(let t): zoom.zoomedOut(at: t)
-        case .move(let p): if !overDemoRec() { zoom.moved(map(p)) }
+        case .move(let p):
+            ink.add(map(p))
+            if !overDemoRec() { zoom.moved(map(p)) }
         case .click(let p): if !overDemoRec(), inside(map(p)) { zoom.clicked(map(p)) }
+        // Like the shortcut, the trail is drawn wherever the pointer is, so you can try it over the preview.
+        case .inkDown(let p): ink.begin(map(p))
+        case .inkUp: ink.end()
         }
     }
 
@@ -594,14 +601,20 @@ final class RecorderModel {
         if zoomShortcutNeedsAccess { watchForAccess() }
     }
 
-    /// While recording, holding the trail shortcut draws a trail behind the pointer.
+    /// Holding the trail shortcut draws a trail behind the pointer: in the video while recording, on the preview
+    /// during setup.
     private func registerTrailHotKey() {
         trailHotKey?.unregister()
         trailHotKey = HotKey(trailShortcut, action: { [weak self] in
-            guard let self, case .recording = phase else { return }
-            cursor?.setInking(true)
+            guard let self else { return }
+            if case .recording = phase {
+                cursor?.setInking(true)
+            } else if isSetup, !cropping {
+                previewCursor?.setInking(true)
+            }
         }, release: { [weak self] in
             self?.cursor?.setInking(false)
+            self?.previewCursor?.setInking(false)
         })
         trailShortcutTaken = trailHotKey == nil && trailShortcut.mouseButton == nil
         trailShortcutNeedsAccess = trailHotKey == nil && trailShortcut.mouseButton != nil

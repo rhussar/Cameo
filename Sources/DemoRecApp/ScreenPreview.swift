@@ -7,6 +7,7 @@ import ScreenCaptureKit
 /// Low-res, low-fps live view of whatever will be recorded, for the setup screen.
 /// Display previews leave out DemoRec's own window so the preview doesn't show itself.
 /// Zooms live like the video will: feed `liveZoom` the pointer and it redraws smoothly while zoomed.
+/// Draws the trail in `liveInk` the same way, redrawing while any of it is still fading.
 final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     /// Delivered on the main queue.
     var onImage: ((PreviewFrame) -> Void)?
@@ -28,9 +29,17 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     private var zoomEnabled = true // queue only
     private var zoom = ZoomState.none // queue only
     private var lastZoomStep: Double? // queue only
+    private var inkShown = false // queue only; the last render had a trail, so it needs one more to clear it
     private var zoomTimer: DispatchSourceTimer?
     /// In the coordinates of the cropped screen, on the host clock in seconds (see `now`).
     let liveZoom = LiveZoom()
+    /// Also in the cropped screen's coordinates on the host clock. Pass one in to share it (see LivePreview).
+    let liveInk: LiveInk
+
+    init(liveInk: LiveInk = LiveInk()) {
+        self.liveInk = liveInk
+        super.init()
+    }
 
     /// Seconds on the host clock: what CursorRecorder reports when started at time zero.
     static func now() -> Double { SharedClock.now().seconds }
@@ -112,10 +121,10 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         }
         lastTexture = cvTexture
         lastFrame = frame
-        if zoom == .none { render(frame) } // while zoomed, the zoom timer redraws anyway
+        if zoom == .none, !inkShown { render(frame) } // while zoomed or drawing, the timer redraws anyway
     }
 
-    /// Steps the zoom 30 times a second and redraws while it's zoomed or moving.
+    /// Steps the zoom 30 times a second and redraws while it's zoomed or moving, or a trail is showing.
     private func startZoomTimer() {
         zoomTimer?.cancel()
         let timer = DispatchSource.makeTimerSource(queue: queue)
@@ -128,17 +137,25 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     private func stepZoom() {
         let now = Self.now()
         defer { lastZoomStep = now }
-        guard zoomEnabled, liveZoom.isActive || zoom != .none else { return }
-        let dt = min(max(now - (lastZoomStep ?? now), 0.001), 0.1)
-        var z = liveZoom.step(now: now, dt: dt)
-        if z.scale < 1.001 { z = .none }
-        zoom = z
+        let zooming = zoomEnabled && (liveZoom.isActive || zoom != .none)
+        guard zooming || inkShown || liveInk.isVisible(at: now) else { return }
+        if zooming {
+            let dt = min(max(now - (lastZoomStep ?? now), 0.001), 0.1)
+            var z = liveZoom.step(now: now, dt: dt)
+            if z.scale < 1.001 { z = .none }
+            zoom = z
+        }
         if let frame = lastFrame { render(frame) }
     }
 
     private func render(_ frame: CIImage) {
         var out = frame
-        if stage != nil || canvas != nil || crop != nil || zoom != .none {
+        var cropped = Layout()
+        cropped.crop = crop
+        let screenSize = cropped.cropRect(in: frame.extent.size).size
+        let ink = liveInk.image(at: Self.now(), size: screenSize)
+        inkShown = ink != nil
+        if stage != nil || canvas != nil || crop != nil || zoom != .none || ink != nil {
             var layout = Layout()
             layout.stage = stage
             layout.background = background
@@ -153,7 +170,7 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
                 compositor = Compositor(layout: layout)
                 compositorLayout = layout
             }
-            out = compositor!.compose(screen: frame, cutout: nil, zoom: zoom)
+            out = compositor!.compose(screen: frame, cutout: nil, zoom: zoom, ink: ink)
         }
         guard let rendered = renderer.render(out) else { return }
         DispatchQueue.main.async { self.onImage?(rendered) }
