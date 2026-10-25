@@ -29,13 +29,15 @@ public final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
     /// Builds the capture filter for a target. Nil means the main display.
     /// `excludingCurrentApp` keeps the calling app's own windows (e.g. the recording controls) out of a display capture.
     public static func filter(for target: CaptureTarget?, excludingCurrentApp: Bool) async throws -> SCContentFilter {
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         if case .window(let id) = target {
+            // Any window, including one on another desktop or minimised.
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             guard let window = content.windows.first(where: { $0.windowID == id }) else {
                 throw DemoRecError("That window is no longer open. Pick another one.")
             }
             return SCContentFilter(desktopIndependentWindow: window)
         }
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         var displayID: CGDirectDisplayID?
         if case .display(let id) = target { displayID = id }
         let displays = content.displays

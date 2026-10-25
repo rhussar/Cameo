@@ -67,7 +67,7 @@ final class RecorderModel {
     /// What gets recorded. Nil until the first refresh picks the display DemoRec is on.
     var target: CaptureTarget? {
         didSet {
-            if case .display(let id) = target { UserDefaults.standard.set(Int(id), forKey: "displayID") }
+            rememberTarget()
             if target != oldValue {
                 cropping = false
                 updateScreenPreviewLayout() // each screen keeps its own crop
@@ -445,7 +445,8 @@ final class RecorderModel {
         cameraOn = !d.bool(forKey: "cameraOff")
         micOn = !d.bool(forKey: "micMuted")
         format = d.string(forKey: "format").flatMap(OutputFormat.init(rawValue:)) ?? .original
-        cropFillsVideo = d.bool(forKey: "cropFillsVideo")
+        // On unless you turned it off: a crop is a zoom on that spot that stays for the whole video.
+        cropFillsVideo = d.object(forKey: "cropFillsVideo") as? Bool ?? true
         crops = (d.dictionary(forKey: "crops") as? [String: [Double]] ?? [:]).compactMapValues { v in
             v.count == 4 ? CGRect(x: v[0], y: v[1], width: v[2], height: v[3]) : nil
         }
@@ -559,8 +560,35 @@ final class RecorderModel {
         Task { await refreshSources() }
     }
 
+    /// Saves what you picked so it comes back next time: a screen by its ID, a window by its app and title
+    /// (window IDs don't survive the app quitting).
+    private func rememberTarget() {
+        let d = UserDefaults.standard
+        switch target {
+        case .display(let id):
+            d.set(Int(id), forKey: "displayID")
+            d.removeObject(forKey: "windowApp")
+            d.removeObject(forKey: "windowTitle")
+        case .window:
+            guard let s = selectedSource, !s.app.isEmpty else { return }
+            d.set(s.app, forKey: "windowApp")
+            d.set(s.subtitle, forKey: "windowTitle")
+        case nil: break
+        }
+    }
+
+    /// The window you picked last, found again by its app and title, or the app's only window.
+    private func savedWindow() -> Source? {
+        guard let app = UserDefaults.standard.string(forKey: "windowApp") else { return nil }
+        let title = UserDefaults.standard.string(forKey: "windowTitle")
+        let mine = windowSources.filter { $0.app == app }
+        return mine.first { $0.subtitle == title } ?? (mine.count == 1 ? mine[0] : nil)
+    }
+
     func refreshSources() async {
-        guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true) else {
+        // Every window, not just those on this desktop: the one you picked stays picked while it's on another
+        // desktop, minimised or behind something.
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false) else {
             screenAccess = false
             return
         }
@@ -574,22 +602,28 @@ final class RecorderModel {
         let hidden: Set<String> = ["com.apple.dock", "com.apple.WindowManager", "com.apple.controlcenter", "com.apple.notificationcenterui", Bundle.main.bundleIdentifier ?? ""]
         let windows = content.windows
             .filter { w in
-                w.windowLayer == 0 && w.isOnScreen && w.frame.width >= 200 && w.frame.height >= 150
+                w.windowLayer == 0 && (w.isOnScreen || target == .window(w.windowID)) && w.frame.width >= 200 && w.frame.height >= 150
                     && !(w.title ?? "").isEmpty // untitled windows are mostly invisible helper overlays
                     && !hidden.contains(w.owningApplication?.bundleIdentifier ?? "")
                     && w.owningApplication?.processID != getpid()
             }
             .map { w in
                 let app = w.owningApplication?.applicationName ?? "Window"
-                return Source(target: .window(w.windowID), title: app, subtitle: w.title ?? "", frame: w.frame)
+                return Source(target: .window(w.windowID), title: app, subtitle: w.title ?? "", frame: w.frame,
+                              app: w.owningApplication?.bundleIdentifier ?? "")
             }
             .sorted { ($0.title.lowercased(), $0.subtitle) < ($1.title.lowercased(), $1.subtitle) }
         // Assigned only on a change: this runs every few seconds, and each assignment redraws the pickers.
         if displays != displaySources { displaySources = displays }
         if windows != windowSources { windowSources = windows }
 
-        // Pick a default, or fall back to a screen if the chosen window was closed.
+        // Pick a default, or fall back to a screen if the chosen window was closed. A window you picked before
+        // comes back when its app opens it again.
         if target == nil || selectedSource == nil {
+            if let window = savedWindow() {
+                target = window.target
+                return
+            }
             let saved = UserDefaults.standard.object(forKey: "displayID") as? Int
             let preferred = saved.map { CGDirectDisplayID($0) } ?? currentDisplayID()
             target = (displaySources.first { $0.target == .display(preferred ?? 0) } ?? displaySources.first)?.target
@@ -1156,6 +1190,8 @@ struct Source: Hashable, Identifiable {
     let subtitle: String
     /// Global, top-left-origin coordinates.
     let frame: CGRect
+    /// The owning app's bundle ID, for windows.
+    var app = ""
     var size: CGSize { frame.size }
     var id: CaptureTarget { target }
 }

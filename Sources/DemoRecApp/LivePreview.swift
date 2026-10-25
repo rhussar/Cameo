@@ -127,14 +127,21 @@ final class LivePreview {
         }
         panel.delegate = closer
         self.closer = closer
-        if let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame {
+        // Back where you last put it, as long as that's still on a screen; else the bottom-left corner.
+        if let saved = UserDefaults.standard.string(forKey: Self.frameKey).map(NSRectFromString),
+           saved.width > 0, NSScreen.screens.contains(where: { $0.visibleFrame.intersects(saved) }) {
+            panel.setFrame(saved, display: false)
+        } else if let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame {
             panel.setFrameOrigin(NSPoint(x: visible.minX + 16, y: visible.minY + 16))
         }
         panel.orderFrontRegardless()
         self.panel = panel
     }
 
+    private nonisolated static let frameKey = "livePreviewFrame"
+
     private func close() {
+        if let panel { UserDefaults.standard.set(NSStringFromRect(panel.frame), forKey: Self.frameKey) }
         zoomLink.attach(nil)
         if !recording { zoomLink.clear() }
         camera?.onVideoFrame = nil
@@ -183,6 +190,13 @@ final class LivePreview {
         let onClose: () -> Void
         init(onClose: @escaping () -> Void) { self.onClose = onClose }
         func windowWillClose(_ notification: Notification) { onClose() }
+        // Saved as you move or resize it, so a crash or quit mid-recording still keeps the spot.
+        func windowDidMove(_ notification: Notification) { save(notification) }
+        func windowDidEndLiveResize(_ notification: Notification) { save(notification) }
+        private func save(_ notification: Notification) {
+            guard let window = notification.object as? NSWindow else { return }
+            UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: LivePreview.frameKey)
+        }
     }
 }
 

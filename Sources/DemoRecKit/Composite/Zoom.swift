@@ -50,7 +50,9 @@ public struct ZoomSettings: Sendable {
         switch strength {
         case .off:
             // Zooms you ask for with the shortcut: close enough to read, smooth, and following the pointer.
-            self.level = 1.6; zoomSpeed = 4.5; panSpeed = 5; followSlack = 0.8
+            // followSlack near 1: the view holds still until the pointer reaches its edge, so working near the
+            // edge of what you zoomed in on doesn't make it drift.
+            self.level = 1.6; zoomSpeed = 4.5; panSpeed = 5; followSlack = 0.97
             usesRests = false; restMinDuration = 1.5; restMinTravel = 0.15; mergeGap = 3; cooldown = 6
         case .subtle:
             self.level = 1.4; zoomSpeed = 4.5; panSpeed = 4.5; followSlack = 0.8
