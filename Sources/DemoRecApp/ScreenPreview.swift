@@ -30,6 +30,8 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     private var zoom = ZoomState.none // queue only
     private var lastZoomStep: Double? // queue only
     private var inkShown = false // queue only; the last render had a trail, so it needs one more to clear it
+    private var renderedZoom = ZoomState.none // queue only; the zoom the last render was drawn at
+    private var newFrame = false // queue only; a frame arrived that the timer hasn't drawn yet
     private var zoomTimer: DispatchSourceTimer?
     /// In the coordinates of the cropped screen, on the host clock in seconds (see `now`).
     let liveZoom = LiveZoom()
@@ -142,7 +144,7 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         }
         lastTexture = cvTexture
         lastFrame = frame
-        if zoom == .none, !inkShown { render(frame) } // while zoomed or drawing, the timer redraws anyway
+        if zoom == .none, !inkShown { render(frame) } else { newFrame = true } // while zoomed or drawing, the timer redraws
     }
 
     /// Steps the zoom 30 times a second and redraws while it's zoomed or moving, or a trail is showing.
@@ -166,10 +168,15 @@ final class ScreenPreview: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
             if z.scale < 1.001 { z = .none }
             zoom = z
         }
-        if let frame = lastFrame { render(frame) }
+        // Held still while zoomed in on a still screen, there's nothing new to draw.
+        let inking = inkShown || liveInk.isVisible(at: now)
+        guard inking || newFrame || zoom != renderedZoom, let frame = lastFrame else { return }
+        render(frame)
     }
 
     private func render(_ frame: CIImage) {
+        newFrame = false
+        renderedZoom = zoom
         var out = frame
         var cropped = Layout()
         cropped.crop = crop

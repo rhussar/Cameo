@@ -10,6 +10,14 @@ public final class Compositor {
     private let backgroundLock = NSLock()
     private var backgroundCache: (size: CGSize, image: CIImage)?
     private lazy var backgroundContext = CIContext(options: [.cacheIntermediates: false])
+    /// The card's shadow only changes with the stage and the sizes, but blurring it is over half a staged frame's work.
+    /// Kept as pixels once the same shadow is asked for twice, so dragging a slider doesn't read back every step.
+    private var shadowCache: (key: ShadowKey, image: CIImage, drawn: Bool)? // backgroundLock
+    private struct ShadowKey: Equatable {
+        var stage: Stage
+        var frame: CGSize
+        var screen: CGSize
+    }
 
     /// `reusing` an earlier compositor keeps its drawn background when the background hasn't changed, so moving
     /// or tilting the card (which makes a new compositor each step) doesn't redraw it every time.
@@ -18,6 +26,7 @@ public final class Compositor {
         if let previous, previous.layout.background == layout.background {
             backgroundCache = previous.backgroundLock.withLock { previous.backgroundCache }
         }
+        shadowCache = previous?.backgroundLock.withLock { previous?.shadowCache }
     }
 
     public func cutout(camera: CIImage, mask: CIImage?) -> CIImage {
@@ -256,6 +265,23 @@ public final class Compositor {
         return fitted.composited(over: back).cropped(to: frame)
     }
 
+    /// The shadow for `key`: the recipe the first time, then drawn once into pixels and reused.
+    private func cachedShadow(_ key: ShadowKey, frame: CGRect, make: () -> CIImage) -> CIImage {
+        backgroundLock.lock(); defer { backgroundLock.unlock() }
+        if let c = shadowCache, c.key == key {
+            if c.drawn { return c.image }
+            if let cg = backgroundContext.createCGImage(c.image, from: frame, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)) {
+                let image = CIImage(cgImage: cg).transformed(by: CGAffineTransform(translationX: frame.minX, y: frame.minY))
+                shadowCache = (key, image, true)
+                return image
+            }
+            return c.image
+        }
+        let image = make()
+        shadowCache = (key, image, false)
+        return image
+    }
+
     /// Zoomed, blurred, dimmed copy of the screen filling the frame, with a rounded, tilted, shadowed card of the screen on top.
     private func stage(screen: CIImage, stage: Stage, frame: CGRect) -> CIImage {
         let W = frame.width
@@ -316,16 +342,18 @@ public final class Compositor {
 
         var result = backdrop
         if stage.shadowOpacity > 0, let roundedMask {
-            let ink = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: CGFloat(stage.shadowOpacity))).cropped(to: cardRect)
-            let blend = CIFilter.blendWithMask()
-            blend.inputImage = ink
-            blend.backgroundImage = CIImage(color: .clear).cropped(to: cardRect)
-            blend.maskImage = roundedMask
-            let shadowShape = projected((blend.outputImage ?? ink).cropped(to: cardRect))
-            let shadow = shadowShape
-                .applyingGaussianBlur(sigma: CGFloat(stage.shadowBlur) * H)
-                .transformed(by: CGAffineTransform(translationX: 0, y: -CGFloat(stage.shadowOffset) * H))
-                .cropped(to: frame)
+            let shadow = cachedShadow(ShadowKey(stage: stage, frame: frame.size, screen: screen.extent.size), frame: frame) {
+                let ink = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: CGFloat(stage.shadowOpacity))).cropped(to: cardRect)
+                let blend = CIFilter.blendWithMask()
+                blend.inputImage = ink
+                blend.backgroundImage = CIImage(color: .clear).cropped(to: cardRect)
+                blend.maskImage = roundedMask
+                let shadowShape = projected((blend.outputImage ?? ink).cropped(to: cardRect))
+                return shadowShape
+                    .applyingGaussianBlur(sigma: CGFloat(stage.shadowBlur) * H)
+                    .transformed(by: CGAffineTransform(translationX: 0, y: -CGFloat(stage.shadowOffset) * H))
+                    .cropped(to: frame)
+            }
             result = shadow.composited(over: result)
         }
         return card.composited(over: result).cropped(to: frame)
@@ -400,7 +428,8 @@ public final class Compositor {
         // A wide, soft shadow, offset a little downwards.
         let shadowSigma = Presenter.shadowBlur * H
         let ink = clipped(CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: Presenter.shadowOpacity)), to: mask, in: tile)
-        let shadow = ink.clampedToExtent().applyingGaussianBlur(sigma: shadowSigma)
+        // Not clamped: outside the tile is clear, so the blur stays local (clamping smeared dark bands across the frame).
+        let shadow = ink.applyingGaussianBlur(sigma: shadowSigma)
             .transformed(by: CGAffineTransform(translationX: 0, y: -Presenter.shadowOffset * H))
             .cropped(to: base.extent)
         result = shadow.composited(over: result)

@@ -159,12 +159,13 @@ public final class Transcoder {
         // Cutouts are made on their own thread, ahead of the render loop, at the size they appear in the video.
         let frameHeight = layout.canvas?.height ?? screenSize.height
         let cutoutHeight = layout.scale * frameHeight
+        let cutoutBuffers = BufferPool()
         let cutouts = CutoutStage(output: cameraOut) { [masker, compositor, ciContext, maskEnabled] buffer in
             var camera = CIImage(cvPixelBuffer: buffer)
             let s = cutoutHeight / camera.extent.height
             if s < 1 { camera = camera.transformed(by: CGAffineTransform(scaleX: s, y: s)) }
             let mask = maskEnabled ? try masker.mask(for: buffer) : nil
-            return try Self.materialize(compositor.cutout(camera: camera, mask: mask), context: ciContext)
+            return try Self.materialize(compositor.cutout(camera: camera, mask: mask), context: ciContext, pool: cutoutBuffers)
         }
         defer { cutouts.cancel() }
         // Both recorders share a start clock but deliver their first frames a moment later.
@@ -294,12 +295,11 @@ public final class Transcoder {
     }
 
     /// Renders an image into its own buffer so later frames reuse the pixels instead of redoing the work.
-    private static func materialize(_ image: CIImage, context: CIContext) throws -> CIImage {
+    private static func materialize(_ image: CIImage, context: CIContext, pool: BufferPool) throws -> CIImage {
         let image = image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
-        var buffer: CVPixelBuffer?
-        CVPixelBufferCreate(nil, Int(image.extent.width.rounded(.up)), Int(image.extent.height.rounded(.up)), kCVPixelFormatType_32BGRA,
-                            [kCVPixelBufferMetalCompatibilityKey: true, kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer)
-        guard let buffer else { throw DemoRecError("could not allocate cutout buffer") }
+        guard let buffer = pool.buffer(width: Int(image.extent.width.rounded(.up)), height: Int(image.extent.height.rounded(.up))) else {
+            throw DemoRecError("could not allocate cutout buffer")
+        }
         let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
         context.render(image, to: buffer, bounds: image.extent, colorSpace: srgb)
         return CIImage(cvPixelBuffer: buffer, options: [.colorSpace: srgb])
@@ -398,5 +398,33 @@ private final class CutoutStage: @unchecked Sendable {
         cancelled = true
         condition.broadcast()
         condition.unlock()
+    }
+}
+
+/// Recycles same-sized BGRA buffers: every camera frame's cutout is the same size, so there's no need for a fresh one each time.
+final class BufferPool: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pool: CVPixelBufferPool?
+    private var size = (0, 0)
+
+    func buffer(width: Int, height: Int) -> CVPixelBuffer? {
+        lock.lock(); defer { lock.unlock() }
+        if pool == nil || size != (width, height) {
+            let attrs: [CFString: Any] = [
+                kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey: width,
+                kCVPixelBufferHeightKey: height,
+                kCVPixelBufferMetalCompatibilityKey: true,
+                kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
+            ]
+            var p: CVPixelBufferPool?
+            CVPixelBufferPoolCreate(nil, nil, attrs as CFDictionary, &p)
+            pool = p
+            size = (width, height)
+        }
+        guard let pool else { return nil }
+        var buffer: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer)
+        return buffer
     }
 }

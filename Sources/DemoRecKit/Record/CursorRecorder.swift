@@ -181,6 +181,8 @@ public final class CursorRecorder: @unchecked Sendable {
         return track
     }
 
+    private var lastMove: CursorTrack.Point? // queue only
+
     private func poll() {
         tick += 1
         // A window can be moved mid-recording; checking its frame ~10 times a second is plenty.
@@ -200,7 +202,11 @@ public final class CursorRecorder: @unchecked Sendable {
             if click { track.clicks.append(p) }
             lock.unlock()
         }
-        if sample { onEvent?(.move(p)) }
+        // Only real moves: a pointer sitting still would otherwise wake the listener 60 times a second.
+        if sample, p.x != lastMove?.x || p.y != lastMove?.y {
+            lastMove = p
+            onEvent?(.move(p))
+        }
         if click { onEvent?(.click(p)) }
     }
 

@@ -543,12 +543,12 @@ final class RecorderModel {
         let firstAccess = !screenAccess
         screenAccess = true
         let names = Dictionary(NSScreen.screens.compactMap { s in s.displayID.map { ($0, s.localizedName) } }, uniquingKeysWith: { a, _ in a })
-        displaySources = content.displays.map { d in
+        let displays = content.displays.map { d in
             Source(target: .display(d.displayID), title: names[d.displayID] ?? "Display \(d.displayID)",
                    subtitle: d.displayID == CGMainDisplayID() ? "Main screen" : "", frame: d.frame)
         }
         let hidden: Set<String> = ["com.apple.dock", "com.apple.WindowManager", "com.apple.controlcenter", "com.apple.notificationcenterui", Bundle.main.bundleIdentifier ?? ""]
-        windowSources = content.windows
+        let windows = content.windows
             .filter { w in
                 w.windowLayer == 0 && w.isOnScreen && w.frame.width >= 200 && w.frame.height >= 150
                     && !(w.title ?? "").isEmpty // untitled windows are mostly invisible helper overlays
@@ -560,6 +560,9 @@ final class RecorderModel {
                 return Source(target: .window(w.windowID), title: app, subtitle: w.title ?? "", frame: w.frame)
             }
             .sorted { ($0.title.lowercased(), $0.subtitle) < ($1.title.lowercased(), $1.subtitle) }
+        // Assigned only on a change: this runs every few seconds, and each assignment redraws the pickers.
+        if displays != displaySources { displaySources = displays }
+        if windows != windowSources { windowSources = windows }
 
         // Pick a default, or fall back to a screen if the chosen window was closed.
         if target == nil || selectedSource == nil {

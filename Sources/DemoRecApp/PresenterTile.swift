@@ -1,4 +1,5 @@
 import DemoRecKit
+import ImageIO
 import SwiftUI
 
 /// You in the previews, drawn the way the video will show you: the cutout as is, or the camera picture in a
@@ -62,8 +63,8 @@ struct BackgroundSwatch: View {
             Color(red: r, green: g, blue: b)
                 .overlay(LinearGradient(colors: [.white.opacity(0.10), .black.opacity(0.14)], startPoint: .topLeading, endPoint: .bottomTrailing))
         case .image(let path, _):
-            if let img = NSImage(contentsOfFile: path) {
-                Image(nsImage: img).resizable().scaledToFill()
+            if let img = WallpaperThumbnails.picture(path) {
+                Image(decorative: img, scale: 1).resizable().scaledToFill()
             } else {
                 Color.gray.overlay(Image(systemName: "photo").foregroundStyle(.white.opacity(0.7)))
             }
@@ -80,6 +81,22 @@ enum WallpaperThumbnails {
         if let img = cache[name] { return img }
         guard let img = Wallpaper.named(name)?.render(width: 192, height: 120) else { return nil }
         cache[name] = img
+        return img
+    }
+
+    private static var pictures: [String: CGImage] = [:]
+
+    /// A small copy of your background picture. Decoding the full-size file on every redraw stalled the window.
+    static func picture(_ path: String) -> CGImage? {
+        if let img = pictures[path] { return img }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 240,
+        ]
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let img = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        pictures[path] = img
         return img
     }
 }
