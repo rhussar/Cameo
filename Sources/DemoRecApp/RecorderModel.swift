@@ -37,10 +37,14 @@ final class RecorderModel {
         hiddenUnfinished.insert(dir.lastPathComponent)
     }
     var previewHovering = false
-    var lookOpen = false
-    var sceneOpen = false
-    /// Window content width, so controls can grow with a bigger window.
-    var windowWidth: CGFloat = 1100
+    /// The settings panel open under the preview, if any.
+    var openPanel: Panel?
+    enum Panel { case you, scene, shortcuts }
+    /// A shortcut is taken by another app or waiting for Accessibility access.
+    var shortcutProblem: Bool {
+        zoomShortcutTaken || trailShortcutTaken || highlightShortcutTaken
+            || zoomShortcutNeedsAccess || trailShortcutNeedsAccess || highlightShortcutNeedsAccess
+    }
 
     /// Output frame size, e.g. YouTube 4K or LinkedIn square.
     var format: OutputFormat {
@@ -799,6 +803,7 @@ final class RecorderModel {
 
     func record() {
         cropping = false
+        openPanel = nil
         if capturingShortcut != nil { finishCapturing(nil) }
         task = Task { await startRecording() }
     }

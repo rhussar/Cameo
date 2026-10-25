@@ -11,7 +11,9 @@ AVFoundation, Vision, CoreImage). No models to download, no cloud.
 scripts/build-app.sh
 ```
 
-This installs `~/Applications/Cameo.app` (the app was called DemoRec before; the CLI is still `demorec`). Open it, drag yourself in the preview to wherever you
+This installs `~/Applications/Cameo.app` (the app was called DemoRec before; the CLI is still `demorec`). Everything sits in one row under the
+preview: what to record, crop, video size, camera and mic (click to turn each off; the arrow picks which one), then
+**You**, **Scene** and **Shortcuts**, each a small panel. Drag yourself in the preview to wherever you
 want to appear (you line up flush with an edge or the middle when you get within a few points of it), drag the slider to set your size, and hit **Start Recording**. After a
 3-second countdown the window shrinks to a small floating pill (hidden from the recording).
 Click **Stop** and the app makes the video, then offers **Play** and **Show in Finder**.
@@ -46,25 +48,25 @@ or ultrawide monitor. The preview switches to the whole screen with a box over i
 the box's shape. Each screen remembers its own crop; **Whole Screen** clears it. Zoom works inside the crop.
 
 **Zoom** is yours to call: press **⌃⌥Z** and the screen zooms in on the pointer and follows it,
-press it again and it zooms back out. Click the **Zoom ⌃⌥Z** button to pick a different shortcut (it
+press it again and it zooms back out. Click the shortcut next to **Zoom** under **Shortcuts** to pick a different one (it
 needs ⌘, ⌃ or ⌥, or can be an F-key on its own). Try it on the setup preview, which zooms live; while
 recording, the magnifier in the stop pill shows whether you're zoomed in. Only the screen zooms, not
 you. (The CLI can also zoom on its own on clicks and pauses; see `--zoom`.)
 
 **Trail** lets you point things out: while recording, hold **⌃⌥D** and move the pointer, and it leaves a
-green glowing trail that fades about a second and a half after you draw it. Click the **Trail ⌃⌥D** button
+green glowing trail that fades about a second and a half after you draw it. Click its shortcut
 to pick a different key (same rules as Zoom; an F-key or a spare mouse button is easiest to hold). The trail
 is drawn on the screen, so it zooms with it. Try it on the setup preview; the live preview shows it while recording too.
 
 **Highlight** boxes what you're pointing at: press **⌃⌥H** and a green box pops in around whatever's under the
 pointer, stays a couple of seconds and fades. It works out what you mean from the app's own layout: over a
 button or link it boxes just that, over text the paragraph (or heading) it's in, and over empty space the panel or
-container you're in. It needs Accessibility access (Privacy & Security > Accessibility), which the **Highlight ⌃⌥H**
-button asks for; click it to pick a different shortcut. Like the trail, it zooms with the screen and shows on the
+container you're in. It needs Accessibility access (Privacy & Security > Accessibility), which the **Shortcuts** panel
+asks for; click its shortcut to pick a different one. Like the trail, it zooms with the screen and shows on the
 previews. Chrome and Electron apps describe their web pages to Cameo once asked, so the first press there may box
 a bigger area than you meant; press again.
 
-The colour well next to **Trail** and **Highlight** sets each one's colour (green unless you pick another).
+The colour well next to the **Trail** and **Highlight** shortcuts sets each one's colour (green unless you pick another).
 
 ## Build (CLI)
 
