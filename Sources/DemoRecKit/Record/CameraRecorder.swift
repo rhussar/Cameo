@@ -50,26 +50,33 @@ public final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBuffe
         return fallback
     }
 
-    public static func requestAccess() async throws {
-        for media in [AVMediaType.video, .audio] {
+    public static func requestAccess(video: Bool = true, audio: Bool = true) async throws {
+        for media in [AVMediaType.video, .audio] where media == .video ? video : audio {
             let ok = await AVCaptureDevice.requestAccess(for: media)
             guard ok else { throw DemoRecError("\(media == .video ? "Camera" : "Microphone") access denied. Allow it in System Settings > Privacy & Security, then try again.") }
         }
     }
 
     /// `cameraID` / `microphoneID` pick devices by unique ID; when absent or unplugged, the camera falls back
-    /// to `cameraName` matching and the microphone to the system default.
-    public func start(cameraName: String?, cameraID: String? = nil, microphoneID: String? = nil) throws {
-        let camera = try cameraID.flatMap { AVCaptureDevice(uniqueID: $0) } ?? Self.pickCamera(matching: cameraName)
-        print("camera: \(camera.localizedName)")
+    /// to `cameraName` matching and the microphone to the system default. `video` or `audio` false leaves that
+    /// device off entirely (camera off, or you muted), so the file has only the other track.
+    public func start(cameraName: String?, cameraID: String? = nil, microphoneID: String? = nil,
+                      video: Bool = true, audio: Bool = true) throws {
+        guard video || audio else { throw DemoRecError("Nothing to record: the camera and microphone are both off") }
+        let camera = video ? try cameraID.flatMap { AVCaptureDevice(uniqueID: $0) } ?? Self.pickCamera(matching: cameraName) : nil
+        if let camera { print("camera: \(camera.localizedName)") }
 
         session.beginConfiguration()
         session.sessionPreset = session.canSetSessionPreset(.hd1920x1080) ? .hd1920x1080 : .high
-        let camInput = try AVCaptureDeviceInput(device: camera)
-        guard session.canAddInput(camInput) else { throw DemoRecError("Cannot add camera input") }
-        session.addInput(camInput)
+        if let camera {
+            let camInput = try AVCaptureDeviceInput(device: camera)
+            guard session.canAddInput(camInput) else { throw DemoRecError("Cannot add camera input") }
+            session.addInput(camInput)
+        }
 
-        if let mic = microphoneID.flatMap({ AVCaptureDevice(uniqueID: $0) }) ?? AVCaptureDevice.default(for: .audio) {
+        if !audio {
+            print("microphone: muted")
+        } else if let mic = microphoneID.flatMap({ AVCaptureDevice(uniqueID: $0) }) ?? AVCaptureDevice.default(for: .audio) {
             print("microphone: \(mic.localizedName)")
             let micInput = try AVCaptureDeviceInput(device: mic)
             if session.canAddInput(micInput) { session.addInput(micInput) }
@@ -77,18 +84,23 @@ public final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBuffe
             fputs("no microphone found; recording video only\n", stderr)
         }
 
-        videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
-        videoOutput.alwaysDiscardsLateVideoFrames = true
-        videoOutput.setSampleBufferDelegate(self, queue: queue)
-        guard session.canAddOutput(videoOutput) else { throw DemoRecError("Cannot add video output") }
-        session.addOutput(videoOutput)
+        if camera != nil {
+            videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+            videoOutput.alwaysDiscardsLateVideoFrames = true
+            videoOutput.setSampleBufferDelegate(self, queue: queue)
+            guard session.canAddOutput(videoOutput) else { throw DemoRecError("Cannot add video output") }
+            session.addOutput(videoOutput)
+        }
 
-        audioOutput.setSampleBufferDelegate(self, queue: queue)
-        if session.canAddOutput(audioOutput) { session.addOutput(audioOutput) }
+        if hasMic {
+            audioOutput.setSampleBufferDelegate(self, queue: queue)
+            if session.canAddOutput(audioOutput) { session.addOutput(audioOutput) }
+        }
         session.commitConfiguration()
+        guard camera != nil || hasMic else { throw DemoRecError("No microphone found, and the camera is off") }
 
         // Ask the camera for the requested frame rate when its active format allows it.
-        if let range = camera.activeFormat.videoSupportedFrameRateRanges.first(where: { $0.minFrameRate <= Double(fps) && Double(fps) <= $0.maxFrameRate }) {
+        if let camera, let range = camera.activeFormat.videoSupportedFrameRateRanges.first(where: { $0.minFrameRate <= Double(fps) && Double(fps) <= $0.maxFrameRate }) {
             _ = range
             if (try? camera.lockForConfiguration()) != nil {
                 camera.activeVideoMinFrameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
@@ -106,6 +118,7 @@ public final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBuffe
     }
 
     private var hasMic: Bool { session.inputs.contains { ($0 as? AVCaptureDeviceInput)?.device.hasMediaType(.audio) == true } }
+    private var hasCamera: Bool { session.inputs.contains { ($0 as? AVCaptureDeviceInput)?.device.hasMediaType(.video) == true } }
 
     private func ensureInputs(video: CMSampleBuffer?, audio: CMSampleBuffer?) {
         guard let writer, !writing else { return }
@@ -138,7 +151,7 @@ public final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBuffe
             writer.add(input)
             audioInput = input
         }
-        let ready = videoInput != nil && (audioInput != nil || !hasMic)
+        let ready = (videoInput != nil || !hasCamera) && (audioInput != nil || !hasMic)
         if ready {
             guard writer.startWriting() else {
                 fputs("camera writer failed: \(writer.error?.localizedDescription ?? "?")\n", stderr)

@@ -66,7 +66,7 @@ final class LivePreview {
         ink.setColors(trail: trail, highlight: highlight)
     }
 
-    func start(model: RecorderModel, camera: CameraRecorder, target: CaptureTarget?) {
+    func start(model: RecorderModel, camera: CameraRecorder?, target: CaptureTarget?) {
         setInkColors(trail: model.trailColor, highlight: model.highlightColor)
         self.model = model
         self.camera = camera

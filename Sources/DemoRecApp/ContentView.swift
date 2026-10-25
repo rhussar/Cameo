@@ -169,7 +169,9 @@ private struct Preview: View {
     @ViewBuilder private func presenter(in size: CGSize) -> some View {
         let h = size.height * model.size
         let margin = size.height * RecorderModel.margin(for: model.corner)
-        if model.cameraDenied {
+        if !model.cameraOn {
+            EmptyView() // camera off: you're not in the video
+        } else if model.cameraDenied {
             VStack(spacing: 8) {
                 Text("Cameo needs your camera").foregroundStyle(.white)
                 Button("Open Settings") { model.openPrivacySettings(camera: true) }

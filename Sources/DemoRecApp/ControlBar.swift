@@ -143,7 +143,7 @@ private struct FormatMenu: View {
     }
 }
 
-/// Picks the camera or mic.
+/// Click to turn the camera or mic on and off; the arrow picks which one.
 private struct DeviceButton: View {
     @Bindable var model: RecorderModel
     enum Kind { case camera, microphone }
@@ -155,20 +155,49 @@ private struct DeviceButton: View {
                 ForEach(devices, id: \.uniqueID) { d in
                     Button {
                         if kind == .camera { model.cameraChoice = d.uniqueID } else { model.microphoneChoice = d.uniqueID }
+                        on = true
                     } label: {
                         Label(d.localizedName, systemImage: d.uniqueID == chosen ? "checkmark" : "")
                     }
                 }
             }
+            Divider()
+            Button(on ? "Turn \(name) Off" : "Turn \(name) On") { on.toggle() }
         } label: {
-            Image(systemName: kind == .camera ? "video.fill" : "mic.fill")
+            // Menus draw their labels in one colour, so "Off" spells it out.
+            if on { Image(systemName: icon) } else { Label("Off", systemImage: icon) }
+        } primaryAction: {
+            on.toggle()
         }
         .fixedSize()
-        .help(devices.first { $0.uniqueID == chosen }?.localizedName ?? (kind == .camera ? "Camera" : "Microphone"))
+        .help(help)
+        .accessibilityLabel(on ? "\(name) on" : "\(name) off")
     }
 
+    private var name: String { kind == .camera ? "Camera" : "Microphone" }
+    private var on: Bool {
+        get { kind == .camera ? model.cameraOn : model.micOn }
+        nonmutating set { if kind == .camera { model.cameraOn = newValue } else { model.micOn = newValue } }
+    }
     private var devices: [AVCaptureDevice] { kind == .camera ? model.cameras : model.microphones }
     private var chosen: String? { kind == .camera ? model.cameraChoice : model.microphoneChoice }
+    private var icon: String {
+        switch (kind, on) {
+        case (.camera, true): "video.fill"
+        case (.camera, false): "video.slash.fill"
+        case (.microphone, true): "mic.fill"
+        case (.microphone, false): "mic.slash.fill"
+        }
+    }
+    private var help: String {
+        let device = devices.first { $0.uniqueID == chosen }?.localizedName ?? name
+        switch (kind, on) {
+        case (.camera, true): return "\(device). Click to turn the camera off (just the screen and your voice)."
+        case (.camera, false): return "Camera off: you're not in the video. Click to turn it on."
+        case (.microphone, true): return "\(device). Click to mute."
+        case (.microphone, false): return "Muted: the video has no sound. Click to unmute."
+        }
+    }
 }
 
 /// Opens one of the three settings panels.
@@ -247,6 +276,12 @@ private struct YouPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if !model.cameraOn {
+                Label("The camera is off, so you're not in the video.", systemImage: "video.slash")
+                    .font(.callout).foregroundStyle(.secondary)
+                Button("Turn Camera On") { model.cameraOn = true }
+                Divider()
+            }
             Group {
                 PanelRow("Style") {
                     Picker("Style", selection: $model.presenter.style) {
@@ -295,6 +330,7 @@ private struct YouPanel: View {
                     .padding(.top, 6)
                 }
             }
+            .disabled(!model.cameraOn)
         }
         .frame(width: 320)
     }

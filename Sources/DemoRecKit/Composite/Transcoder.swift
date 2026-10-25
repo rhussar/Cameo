@@ -70,18 +70,19 @@ public final class Transcoder {
         }
     }
 
+    /// camera.mov may be missing (camera off and muted) or hold only video (muted) or only audio (camera off).
     public func run(screenURL: URL, cameraURL: URL, outputURL: URL) async throws {
         let screenAsset = AVURLAsset(url: screenURL)
-        let cameraAsset = AVURLAsset(url: cameraURL)
+        let cameraAsset = FileManager.default.fileExists(atPath: cameraURL.path) ? AVURLAsset(url: cameraURL) : nil
         guard let screenTrack = try await screenAsset.loadTracks(withMediaType: .video).first else { throw DemoRecError("screen.mov has no video track") }
-        guard let cameraTrack = try await cameraAsset.loadTracks(withMediaType: .video).first else { throw DemoRecError("camera.mov has no video track") }
-        let audioTrack = try await cameraAsset.loadTracks(withMediaType: .audio).first
+        let cameraTrack = try await cameraAsset?.loadTracks(withMediaType: .video).first
+        let audioTrack = try await cameraAsset?.loadTracks(withMediaType: .audio).first
 
         let recordedSize = try await screenTrack.load(.naturalSize)
         // What the compositor treats as the screen: the crop, if there is one.
         let screenSize = layout.cropRect(in: recordedSize).size
         let screenDuration = try await screenAsset.load(.duration)
-        let cameraDuration = try await cameraAsset.load(.duration)
+        let cameraDuration = try await cameraAsset?.load(.duration) ?? .zero
         let duration = CMTimeMaximum(screenDuration, cameraDuration)
 
         var outW = Int(screenSize.width)
@@ -104,14 +105,20 @@ public final class Transcoder {
         let screenOut = AVAssetReaderTrackOutput(track: screenTrack, outputSettings: pixelFormat)
         screenOut.alwaysCopiesSampleData = false
         screenReader.add(screenOut)
-        let cameraReader = try AVAssetReader(asset: cameraAsset)
-        let cameraOut = AVAssetReaderTrackOutput(track: cameraTrack, outputSettings: pixelFormat)
-        cameraOut.alwaysCopiesSampleData = false
-        cameraReader.add(cameraOut)
+        var cameraReader: AVAssetReader?
+        var cameraOut: AVAssetReaderTrackOutput?
+        if let cameraAsset, let cameraTrack {
+            let reader = try AVAssetReader(asset: cameraAsset)
+            let out = AVAssetReaderTrackOutput(track: cameraTrack, outputSettings: pixelFormat)
+            out.alwaysCopiesSampleData = false
+            reader.add(out)
+            cameraReader = reader
+            cameraOut = out
+        }
         // Audio gets its own reader: a reader with two outputs blocks when one of them is not drained in step.
         var audioReader: AVAssetReader?
         var audioOut: AVAssetReaderTrackOutput?
-        if let audioTrack {
+        if let cameraAsset, let audioTrack {
             let reader = try AVAssetReader(asset: cameraAsset)
             let out = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
             reader.add(out)
@@ -119,7 +126,7 @@ public final class Transcoder {
             audioOut = out
         }
         guard screenReader.startReading() else { throw screenReader.error ?? DemoRecError("screen reader failed") }
-        guard cameraReader.startReading() else { throw cameraReader.error ?? DemoRecError("camera reader failed") }
+        if let cameraReader, !cameraReader.startReading() { throw cameraReader.error ?? DemoRecError("camera reader failed") }
         if let audioReader, !audioReader.startReading() { throw audioReader.error ?? DemoRecError("audio reader failed") }
 
         // Writer
@@ -160,17 +167,18 @@ public final class Transcoder {
         let frameHeight = layout.canvas?.height ?? screenSize.height
         let cutoutHeight = layout.scale * frameHeight
         let cutoutBuffers = BufferPool()
-        let cutouts = CutoutStage(output: cameraOut) { [masker, compositor, ciContext, maskEnabled] buffer in
+        let cutouts = cameraOut.map { CutoutStage(output: $0) { [masker, compositor, ciContext, maskEnabled] buffer in
             var camera = CIImage(cvPixelBuffer: buffer)
             let s = cutoutHeight / camera.extent.height
             if s < 1 { camera = camera.transformed(by: CGAffineTransform(scaleX: s, y: s)) }
             let mask = maskEnabled ? try masker.mask(for: buffer) : nil
             return try Self.materialize(compositor.cutout(camera: camera, mask: mask), context: ciContext, pool: cutoutBuffers)
-        }
-        defer { cutouts.cancel() }
+        } }
+        defer { cutouts?.cancel() }
         // Both recorders share a start clock but deliver their first frames a moment later.
         // Start the video once both have a frame, so it doesn't open on black.
-        let start = CMTimeMaximum(try await Self.firstFrameTime(screenTrack), try await Self.firstFrameTime(cameraTrack))
+        var start = try await Self.firstFrameTime(screenTrack)
+        if let cameraTrack { start = CMTimeMaximum(start, try await Self.firstFrameTime(cameraTrack)) }
         // Passthrough audio comes out in media time; its track's edit places it on the shared clock.
         var audioOffset = start
         if let audioTrack, let edit = try await audioTrack.load(.segments).first(where: { !$0.isEmpty }) {
@@ -198,7 +206,7 @@ public final class Transcoder {
             frameIndex += 1
             let t = CMTimeMultiply(frameDuration, multiplier: Int32(i))
             _ = screenSrc.advance(to: start + t)
-            let cutout = try cutouts.advance(to: start + t)
+            let cutout = try cutouts?.advance(to: start + t)
 
             let screen = screenSrc.current.map { CIImage(cvPixelBuffer: $0) } ?? black
             let ink = inkTrail?.image(at: (start + t).seconds, size: screenSize)
@@ -290,7 +298,7 @@ public final class Transcoder {
         await writer.finishWriting()
         if let error = writer.error { throw error }
         screenReader.cancelReading()
-        cameraReader.cancelReading()
+        cameraReader?.cancelReading()
         audioReader?.cancelReading()
     }
 

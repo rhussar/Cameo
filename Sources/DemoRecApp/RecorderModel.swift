@@ -92,6 +92,23 @@ final class RecorderModel {
     var microphoneID: String? {
         didSet { UserDefaults.standard.set(microphoneID, forKey: "microphoneID") }
     }
+    /// Off: the camera isn't used at all (its light stays off) and you're not in the video; just the screen and your voice.
+    var cameraOn: Bool {
+        didSet {
+            UserDefaults.standard.set(!cameraOn, forKey: "cameraOff")
+            guard cameraOn != oldValue, isSetup else { return }
+            if cameraOn {
+                startCameraPreview()
+            } else {
+                previewImage = nil
+                Task { await preview.stop() }
+            }
+        }
+    }
+    /// Off: no microphone, so the video is silent.
+    var micOn: Bool {
+        didSet { UserDefaults.standard.set(!micOn, forKey: "micMuted") }
+    }
     var corner: Corner {
         didSet { UserDefaults.standard.set(corner.rawValue, forKey: "corner") }
     }
@@ -425,6 +442,8 @@ final class RecorderModel {
         highlightShortcut = d.data(forKey: "highlightShortcut").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .defaultHighlight
         cameraID = d.string(forKey: "cameraID")
         microphoneID = d.string(forKey: "microphoneID")
+        cameraOn = !d.bool(forKey: "cameraOff")
+        micOn = !d.bool(forKey: "micMuted")
         format = d.string(forKey: "format").flatMap(OutputFormat.init(rawValue:)) ?? .original
         cropFillsVideo = d.bool(forKey: "cropFillsVideo")
         crops = (d.dictionary(forKey: "crops") as? [String: [Double]] ?? [:]).compactMapValues { v in
@@ -479,12 +498,13 @@ final class RecorderModel {
 
     /// Switches the live preview when the camera in use changes (a pick, or a device coming or going).
     private func restartCameraPreviewIfNeeded() {
-        guard previewStarted, isSetup, !cameraDenied, selectedCamera?.uniqueID != previewCameraID else { return }
+        guard previewStarted, cameraOn, isSetup, !cameraDenied, selectedCamera?.uniqueID != previewCameraID else { return }
         startCameraPreview()
     }
 
     private func startCameraPreview() {
         previewStarted = true
+        guard cameraOn else { return }
         previewCameraID = selectedCamera?.uniqueID
         preview.start(deviceID: previewCameraID)
     }
@@ -814,7 +834,7 @@ final class RecorderModel {
 
     private func startRecording() async {
         do {
-            try await CameraRecorder.requestAccess()
+            try await CameraRecorder.requestAccess(video: cameraOn, audio: micOn)
             do {
                 _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             } catch {
@@ -829,11 +849,12 @@ final class RecorderModel {
             let dir = try Session.makeFolder(in: Session.workBase)
             recordedAt = Date()
             let t0 = SharedClock.now()
-            let cam = CameraRecorder(url: dir.appendingPathComponent("camera.mov"), fps: fps, startTime: t0)
+            // With the camera off and the mic muted there's nothing for it to record, so there's no camera.mov.
+            let cam = cameraOn || micOn ? CameraRecorder(url: dir.appendingPathComponent("camera.mov"), fps: fps, startTime: t0) : nil
             let scr = ScreenRecorder(url: dir.appendingPathComponent("screen.mov"), fps: fps, startTime: t0)
             camera = cam
-            try cam.start(cameraName: selectedCamera?.localizedName, cameraID: selectedCamera?.uniqueID,
-                          microphoneID: selectedMicrophone?.uniqueID)
+            try cam?.start(cameraName: selectedCamera?.localizedName, cameraID: selectedCamera?.uniqueID,
+                           microphoneID: selectedMicrophone?.uniqueID, video: cameraOn, audio: micOn)
             let recorded = target ?? currentDisplayID().map { .display($0) }
             try await scr.start(target: recorded, excludingCurrentApp: true)
             screen = scr
@@ -863,7 +884,8 @@ final class RecorderModel {
     }
 
     func stop() {
-        guard case .recording = phase, let screen, let camera, let sessionDir else { return }
+        guard case .recording = phase, let screen, let sessionDir else { return }
+        let camera = camera
         let recordedAt = recordedAt
         phase = .processing(0)
         pill.hide()
@@ -875,7 +897,7 @@ final class RecorderModel {
         task = Task {
             do {
                 try await screen.stop()
-                try await camera.stop()
+                try await camera?.stop()
                 try? track?.save(to: sessionDir)
                 let out = try await makeVideo(in: sessionDir, layout: layout, cursor: track, recordedAt: recordedAt)
                 thumbnail = await Self.thumbnail(for: out)
@@ -1040,7 +1062,7 @@ final class RecorderModel {
         unfinished = work
             .filter { dir in
                 dir.standardizedFileURL != sessionDir?.standardizedFileURL
-                    && ["screen.mov", "camera.mov"].allSatisfy { fm.fileExists(atPath: dir.appendingPathComponent($0).path) }
+                    && fm.fileExists(atPath: dir.appendingPathComponent("screen.mov").path) // camera.mov only if camera or mic was on
             }
             .sorted { $0.lastPathComponent > $1.lastPathComponent }
     }

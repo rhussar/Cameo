@@ -123,7 +123,8 @@ struct Composite: AsyncParsableCommand {
         let dir = URL(fileURLWithPath: NSString(string: session).expandingTildeInPath)
         let screenURL = dir.appendingPathComponent("screen.mov")
         let cameraURL = dir.appendingPathComponent("camera.mov")
-        for u in [screenURL, cameraURL] where !FileManager.default.fileExists(atPath: u.path) {
+        // camera.mov is optional: without it (camera off and muted) the video is just the screen.
+        for u in [screenURL] where !FileManager.default.fileExists(atPath: u.path) {
             throw DemoRecError("missing \(u.lastPathComponent) in \(dir.path)")
         }
         let outURL = output.map { URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath) } ?? dir.appendingPathComponent("final.mp4")
