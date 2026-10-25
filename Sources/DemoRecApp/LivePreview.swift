@@ -44,9 +44,9 @@ final class LivePreview {
             func inside(_ p: CursorTrack.Point) -> Bool { (0...1).contains(p.x) && (0...1).contains(p.y) }
             switch event {
             case .zoomIn(let p):
+                // Near or just past the crop's edge, zoom on the nearest spot inside, as the video will.
                 let q = map(p)
-                guard inside(q) else { return }
-                link.zoomedIn(q)
+                link.zoomedIn(CursorTrack.Point(t: q.t, x: min(max(q.x, 0), 1), y: min(max(q.y, 0), 1)))
             case .zoomOut(let t): link.zoomedOut(t + offset)
             case .move(let p):
                 ink.add(map(p))

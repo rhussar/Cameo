@@ -671,7 +671,10 @@ final class RecorderModel {
         func inside(_ p: CursorTrack.Point) -> Bool { (0...1).contains(p.x) && (0...1).contains(p.y) }
         switch event {
         // The shortcut counts wherever the pointer is: it's what the recording would do.
-        case .zoomIn(let p): if inside(map(p)) { zoom.zoomedIn(map(p)) }
+        // Near or just past the crop's edge, zoom on the nearest spot inside, as the video will.
+        case .zoomIn(let p):
+            let q = map(p)
+            zoom.zoomedIn(CursorTrack.Point(t: q.t, x: min(max(q.x, 0), 1), y: min(max(q.y, 0), 1)))
         case .zoomOut(let t): zoom.zoomedOut(at: t)
         case .move(let p):
             ink.add(map(p))

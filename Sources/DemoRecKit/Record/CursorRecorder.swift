@@ -61,7 +61,9 @@ public struct CursorTrack: Codable, Sendable {
         var out = CursorTrack()
         out.samples = samples.map(map)
         out.clicks = clicks.map(map).filter(inside)
-        out.marks = marks.map(map).filter(inside)
+        // A zoom pressed near the crop's edge, or just past it, zooms on the nearest spot inside, so it's moved in
+        // rather than lost.
+        out.marks = marks.map(map).map { Point(t: $0.t, x: min(max($0.x, 0), 1), y: min(max($0.y, 0), 1)) }
         out.zoomOuts = zoomOuts
         out.ink = ink?.map { $0.map(map) }
         out.highlights = highlights?.map { $0.cropped(to: crop) }

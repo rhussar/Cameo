@@ -109,10 +109,13 @@ public final class Compositor {
         guard zoom.scale > 1.001 else { return screen }
         let W = screen.extent.width
         let H = screen.extent.height
+        // Never past the screen's edges: a view that would hang over one slides back in, left, right, up or down.
+        let half = 0.5 / zoom.scale
+        let x = min(max(zoom.x, half), 1 - half), y = min(max(zoom.y, half), 1 - half)
         // Zoom y is top-down; CoreImage's is bottom-up.
         let t = CGAffineTransform(translationX: W / 2, y: H / 2)
             .scaledBy(x: zoom.scale, y: zoom.scale)
-            .translatedBy(x: -zoom.x * W, y: -(1 - zoom.y) * H)
+            .translatedBy(x: -x * W, y: -(1 - y) * H)
         return screen.clampedToExtent().transformed(by: t).cropped(to: screen.extent)
     }
 

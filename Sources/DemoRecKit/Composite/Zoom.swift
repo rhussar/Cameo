@@ -204,7 +204,7 @@ public enum ZoomPlanner {
         }
 
         mutating func snap(to focus: CursorTrack.Point) {
-            pivotX = focus.x; pivotY = focus.y
+            pivotX = Self.inside(focus.x); pivotY = Self.inside(focus.y)
             scale.value = level
             startFollowing()
         }
@@ -212,8 +212,9 @@ public enum ZoomPlanner {
         mutating func step(t: Double, focus: CursorTrack.Point?, cursor: (x: Double, y: Double)?, dt: Double) -> ZoomState {
             if let focus {
                 if !wasZoomed, !following {
-                    // A fresh zoom: grow the focus in place.
-                    pivotX = focus.x; pivotY = focus.y
+                    // A fresh zoom: grow the focus in place. A spot on or past an edge pivots on the edge itself,
+                    // so the view moves in from that edge instead of past it.
+                    pivotX = Self.inside(focus.x); pivotY = Self.inside(focus.y)
                 } else if following, t < focus.t {
                     // Already zoomed and the next moment is coming up: pan over to it.
                     aim(at: focus.x, focus.y)
@@ -255,6 +256,8 @@ public enum ZoomPlanner {
             targetY = y.value
             following = true
         }
+
+        static func inside(_ v: Double) -> Double { min(max(v, 0), 1) }
 
         /// The view's centre when zoomed `scale` times about `pivot`, which stays at the same spot on screen.
         /// It always keeps the view on the screen, for a pivot anywhere on it.
